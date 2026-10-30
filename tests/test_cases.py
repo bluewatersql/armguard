@@ -71,3 +71,23 @@ def test_token_renewed_after_ttl_and_hidden():
 def test_safe_masks_before_hide():
     s = cs.safe(RuntimeError("at https://h.example/x for a@b.io via 10.1.2.3 on ep-1.cloud.databricks.com"))
     assert s == "at <url> for <principal> via <ip> on <host>"
+
+def test_genie_space_ids_sorted_and_safe():
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src/6_genie"))
+    import genie, space, json, re
+    b = [(i, q, s) for i, (q, s) in enumerate(genie.BENCH, 1)]
+    d = space.build_space("cat", {"high": .13, "elevated": .078, "model_version": "3"}, b)
+    s, ids = json.dumps(d), []
+    def walk(x):
+        if isinstance(x, list) and x and all(isinstance(e, dict) and "id" in e for e in x):
+            assert [e["id"] for e in x] == sorted(e["id"] for e in x)
+        for v in (x.values() if isinstance(x, dict) else x if isinstance(x, list) else []):
+            walk(v)
+        if isinstance(x, dict) and "id" in x: ids.append(x["id"])
+    walk(d)
+    assert len(ids) == len(set(ids)) == 26 and all(re.fullmatch("[0-9a-f]{32}", i) for i in ids)
+    t = d["data_sources"]["tables"]
+    assert [x["identifier"] for x in t] == sorted(x["identifier"] for x in t) and "armguard_gt" not in s and "club_il" not in s
+    assert {"column_name": "facts_json", "exclude": True} in next(x for x in t if x["identifier"].endswith("briefs"))["column_configs"]
+    assert len(d["benchmarks"]["questions"]) == 12 and not {q for _, q, _ in b} & {q for q, _ in space.EXAMPLES}
+    assert "{club}" not in s and "{ops}" not in s and "`cat`.armguard_ops.pitcher_risk_current" in s

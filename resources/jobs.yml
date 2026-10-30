@@ -66,6 +66,12 @@ resources:
           spark_python_task:
             python_file: ../src/5_lakebase/lakebase.py
             parameters: ["--mode=sync", "--catalog={{job.parameters.catalog}}", "--as_of_date={{job.parameters.as_of_date}}"]
+        - task_key: t9_genie
+          depends_on: [{ task_key: t8_lakebase }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/6_genie/genie.py
+            parameters: ["--catalog={{job.parameters.catalog}}", "--warehouse_id=${resources.sql_warehouses.armguard_wh.id}"]
     armguard_ops_tools:
       name: armguard-ops-tools
       parameters:
