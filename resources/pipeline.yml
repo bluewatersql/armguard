@@ -1,0 +1,11 @@
+resources:
+  schemas:
+    armguard:     { catalog_name: "${var.catalog}", name: armguard }
+    armguard_ops: { catalog_name: "${var.catalog}", name: armguard_ops }
+    armguard_gt:  { catalog_name: "${var.catalog}", name: armguard_gt }
+    armguard_gov: { catalog_name: "${var.catalog}", name: armguard_gov }
+  volumes:
+    landing:  { catalog_name: "${var.catalog}", schema_name: "${resources.schemas.armguard.name}", name: landing }
+    evidence: { catalog_name: "${var.catalog}", schema_name: "${resources.schemas.armguard_ops.name}", name: evidence }
+  sql_warehouses:
+    armguard_wh: { name: armguard-wh, cluster_size: 2X-Small, enable_serverless_compute: true, auto_stop_mins: 10, max_num_clusters: 1 }

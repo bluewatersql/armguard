@@ -1,0 +1,13 @@
+bundle: { name: armguard }
+include: [resources/*.yml]
+variables:
+  catalog: { default: armguard_catalog_placeholder }
+  team_id: { default: "136" }
+  as_of_date: { default: "2025-08-15" }
+  llm_endpoint: { default: databricks-claude-sonnet-5-5 }
+  judge_endpoint: { default: databricks-claude-haiku-5-5 }
+  presenter: { default: "${workspace.current_user.userName}" }
+  lakebase_db_id: { default: "none" }
+targets:
+  fevm: { default: true, workspace: { profile: fevm } }
+  e2demo: { workspace: { profile: e2-demo-field-eng } }
