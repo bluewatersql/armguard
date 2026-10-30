@@ -9,6 +9,7 @@ resources:
         - { name: llm_endpoint, default: "${var.llm_endpoint}" }
         - { name: judge_endpoint, default: "${var.judge_endpoint}" }
         - { name: presenter, default: "${var.presenter}" }
+        - { name: judge, default: "0" }
       environments:
         - environment_key: default
           spec:
@@ -72,6 +73,18 @@ resources:
           spark_python_task:
             python_file: ../src/6_genie/genie.py
             parameters: ["--catalog={{job.parameters.catalog}}", "--warehouse_id=${resources.sql_warehouses.armguard_wh.id}"]
+        - task_key: t10_validate
+          depends_on: [{ task_key: t9_genie }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/3_ml/validate.py
+            parameters: ["--catalog={{job.parameters.catalog}}"]
+        - task_key: t10_genai_eval
+          depends_on: [{ task_key: t9_genie }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/4_genai/genai_eval.py
+            parameters: ["--catalog={{job.parameters.catalog}}", "--judge_endpoint={{job.parameters.judge_endpoint}}", "--judge={{job.parameters.judge}}"]
     armguard_ops_tools:
       name: armguard-ops-tools
       parameters:
