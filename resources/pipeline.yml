@@ -9,3 +9,14 @@ resources:
     evidence: { catalog_name: "${var.catalog}", schema_name: "${resources.schemas.armguard_ops.name}", name: evidence }
   sql_warehouses:
     armguard_wh: { name: armguard-wh, cluster_size: 2X-Small, enable_serverless_compute: true, auto_stop_mins: 10, max_num_clusters: 1 }
+  pipelines:
+    armguard_sdp:
+      name: armguard-sdp
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.armguard.name}
+      serverless: true
+      continuous: false
+      libraries:
+        - file: { path: ../src/1_lakeflow/pipeline_bronze_silver.py }
+        - file: { path: ../src/1_lakeflow/pipeline_gold.py }
+      configuration: { landing: "/Volumes/${var.catalog}/armguard/landing", catalog: "${var.catalog}" }

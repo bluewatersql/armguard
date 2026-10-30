@@ -27,3 +27,6 @@ resources:
           spark_python_task:
             python_file: ../src/1_lakeflow/simulate_club.py
             parameters: ["--catalog={{job.parameters.catalog}}", "--team_id={{job.parameters.team_id}}"]
+        - task_key: t3_pipeline
+          depends_on: [{ task_key: t2_simulate_club }]
+          pipeline_task: { pipeline_id: "${resources.pipelines.armguard_sdp.id}", full_refresh: true }
