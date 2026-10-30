@@ -60,3 +60,26 @@ resources:
           spark_python_task:
             python_file: ../src/4_genai/enrich.py
             parameters: ["--catalog={{job.parameters.catalog}}", "--as_of_date={{job.parameters.as_of_date}}", "--llm_endpoint={{job.parameters.llm_endpoint}}"]
+        - task_key: t8_lakebase
+          depends_on: [{ task_key: t7_genai }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/5_lakebase/lakebase.py
+            parameters: ["--mode=sync", "--catalog={{job.parameters.catalog}}", "--as_of_date={{job.parameters.as_of_date}}"]
+    armguard_ops_tools:
+      name: armguard-ops-tools
+      parameters:
+        - { name: catalog, default: "${var.catalog}" }
+        - { name: as_of_date, default: "${var.as_of_date}" }
+        - { name: mode, default: snapshot }
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "3"
+            dependencies: ["pandas", "databricks-sdk>=0.158", "psycopg[binary]>=3.2", "sqlalchemy>=2.0", "tabulate"]
+      tasks:
+        - task_key: ops
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/5_lakebase/lakebase.py
+            parameters: ["--mode={{job.parameters.mode}}", "--catalog={{job.parameters.catalog}}", "--as_of_date={{job.parameters.as_of_date}}"]
