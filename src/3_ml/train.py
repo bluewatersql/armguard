@@ -17,9 +17,13 @@ def incident_recall(r, il):
     h = il.merge(r, on="athlete_id")
     h = h[(h.run_start <= h.il_date - D) & (h.run_end >= h.il_date - 21 * D)]
     return h.athlete_id.nunique() / max(len(il), 1)
+def false_alarm_rate(runs, il, n_nonlabel_days):
+    h = runs.merge(il, on="athlete_id")
+    h = h[(h.run_start <= h.il_date - D) & (h.run_end >= h.il_date - 21 * D)]
+    return (len(runs) - len(h.drop_duplicates(["athlete_id", "run_start"]))) * 100 / n_nonlabel_days
 def ev(d, f, il):
-    d = d.assign(f=f); n = d[d.label == 0]
-    return incident_recall(alert_runs(d, "f"), il), len(alert_runs(n, "f")) * 100 / len(n)
+    d = d.assign(f=f); r = alert_runs(d, "f")
+    return incident_recall(r, il), false_alarm_rate(r, il, (d.label == 0).sum())
 def main(cm):
     import mlflow, pyspark.sql as P, sklearn.ensemble as se, sklearn.model_selection as ms
     c, sp = cm.Cfg.from_args(sys.argv[1:]), P.SparkSession.builder.getOrCreate()
@@ -33,20 +37,23 @@ def main(cm):
     sr, sf = ev(d, d.velo_delta.map(cm.baseline_flag), il)
     m.fit(X, y)
     class InjuryRisk(mlflow.pyfunc.PythonModel):
-        predict = lambda s, ctx, df: pd.DataFrame({"risk_score": m.predict_proba(df[FEATURES])[:, 1]})
+        def predict(self, context, model_input, params=None):
+            return pd.DataFrame({"risk_score": m.predict_proba(model_input[FEATURES])[:, 1]})
     w, x, nm = InjuryRisk(), X.head(5), f"{c.catalog}.armguard_ops.injury_risk"
     mlflow.set_registry_uri("databricks-uc")
     mlflow.set_experiment("/Shared/armguard-model")
-    r = mlflow.start_run()
-    i = mlflow.pyfunc.log_model(name="model", python_model=w, registered_model_name=nm, input_example=x,
-        signature=mlflow.models.infer_signature(x, w.predict(None, x)), pip_requirements=["scikit-learn==1.6.1", "pandas", "numpy"])
+    with mlflow.start_run() as r:
+        i = mlflow.pyfunc.log_model(name="model", python_model=w, registered_model_name=nm, input_example=x,
+            signature=mlflow.models.infer_signature(x, w.predict(None, x)), pip_requirements=["scikit-learn==1.6.1", "pandas", "numpy"])
     v = i.registered_model_version
     mlflow.MlflowClient().set_registered_model_alias(nm, "champion", v)
+    o = mlflow.pyfunc.load_model(f"models:/{nm}@champion").predict(x)
+    assert list(o.columns) == ["risk_score"] and o.risk_score.between(0, 1).all()
     sp.sql(f"CREATE OR REPLACE TABLE {c.fq('armguard_ops', 'model_thresholds')} AS SELECT {t}D high, {el}D elevated, "
         f"'{v}' model_version, {rc}D oof_incident_recall, {fa}D oof_fa_per100")
     cm.write_evidence(c, "t5_model", "Model",
         f"rows {len(d)}, positives {y.sum()}\nHIGH {t}, ELEVATED {el}\nmodel recall {rc:.2f}, fa/100 {fa:.2f}\n"
-        f"staff recall {sr:.2f}, fa/100 {sf:.2f}\n{nm} v{v}, run {r.info.run_id}")
+        f"staff recall {sr:.2f}, fa/100 {sf:.2f}\n{nm} v{v}, run {r.info.run_id}\nround-trip load OK")
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0]))))
     import common; common.bootstrap(); main(common)

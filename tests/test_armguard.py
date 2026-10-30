@@ -126,8 +126,9 @@ def test_alert_runs_and_incident_recall():
     import train as tr
     def days(a, ds):
         return [{"athlete_id": a, "feature_date": pd.Timestamp("2025-05-01") + pd.Timedelta(days=k), "f": True} for k in ds]
-    df = pd.DataFrame(days("A", [3, 4, 5]) + days("B", [10]) + days("C", [0, 1]) + days("D", [40, 41]))
+    df = pd.DataFrame(days("A", [3, 4, 5]) + days("B", [10]) + days("C", [0, 1]) + days("D", [40, 41]) + days("E", [9]) + days("H", [10]) + days("F", [0, 1])  + days("G", [30, 31]))
     runs = tr.alert_runs(df, "f")
-    assert sorted(runs.athlete_id) == ["A", "C", "D"]
-    il = pd.DataFrame({"athlete_id": list("ABCD"), "il_date": pd.Timestamp("2025-05-01") + pd.to_timedelta([15, 15, 40, 45], "D")})
+    assert sorted(runs.athlete_id) == ["A", "C", "D", "F", "G"]
+    il = pd.DataFrame({"athlete_id": list("ABCDFG"), "il_date": pd.Timestamp("2025-05-01") + pd.to_timedelta([15, 15, 40, 45, 22, 90], "D")})
     assert tr.incident_recall(runs, il) == 0.5
+    assert tr.false_alarm_rate(runs, il, 100) == 2.0
