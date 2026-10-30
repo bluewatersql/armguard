@@ -120,7 +120,7 @@ def main(cm):
     sp.sql(f"MERGE INTO {P} t USING (SELECT * FROM {B} WHERE as_of_date = DATE(:d)) s ON t.athlete_id = s.athlete_id "
            "WHEN MATCHED THEN UPDATE SET t.headline = s.headline, t.recommended_action = s.recommended_action "
            "WHEN NOT MATCHED BY SOURCE THEN UPDATE SET t.headline = NULL, t.recommended_action = NULL", args={"d": c.as_of_date})
-    k = sp.sql(f"SELECT coalesce(body_part, 'unspecified') body_part, count(*) placements FROM {IL} WHERE position IN ('RHP', 'LHP') "
+    k = sp.sql(f"SELECT coalesce(body_part, 'unspecified') body_part, count(*) placements FROM {IL} WHERE lower(position) RLIKE '^(rhp|lhp)$|pitcher' "
                "GROUP BY 1 ORDER BY 2 DESC, 1").toPandas()
     h = b[(b.athlete_id == cm.HERO) & (b.as_of_date.astype(str) == c.as_of_date)][["headline", "recommended_action", "fallback"]]
     cm.write_evidence(c, "t7_genai", "GenAI: IL extraction KPIs and pitcher briefs",

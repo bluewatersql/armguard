@@ -1,5 +1,6 @@
 import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src/7_app"))
+R = pathlib.Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(R / "src/7_app"), str(R / "src/6_genie")]
 import pytest
 from sqlalchemy import create_engine
 import cases as cs
@@ -73,7 +74,6 @@ def test_safe_masks_before_hide():
     assert s == "at <url> for <principal> via <ip> on <host>"
 
 def test_genie_space_ids_sorted_and_safe():
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src/6_genie"))
     import genie, space, json, re
     b = [(i, q, s) for i, (q, s) in enumerate(genie.BENCH, 1)]
     d = space.build_space("cat", {"high": .13, "elevated": .078, "model_version": "3"}, b)
@@ -91,3 +91,15 @@ def test_genie_space_ids_sorted_and_safe():
     assert {"column_name": "facts_json", "exclude": True} in next(x for x in t if x["identifier"].endswith("briefs"))["column_configs"]
     assert len(d["benchmarks"]["questions"]) == 12 and not {q for _, q, _ in b} & {q for q, _ in space.EXAMPLES}
     assert "{club}" not in s and "{ops}" not in s and "`cat`.armguard_ops.pitcher_risk_current" in s
+
+def test_genie_pitcher_rule_poll_pass_redact():
+    import genie, genie_ops as ops, space
+    assert all(space.PIT in genie.BENCH[i][1] for i in (6, 7)) and space.PIT in (R / "src/4_genai/enrich.py").read_text()
+    t, seq = [0], iter(["NOT_STARTED", None, "SOMETHING_NEW", "DONE", "RUNNING"])
+    tick = lambda s: t.__setitem__(0, t[0] + s)
+    assert ops.poll(lambda: next(seq), str, clock=lambda: t[0], sleep=tick) == "DONE" and t[0] == 30
+    assert ops.poll(lambda: "RUNNING", str, limit=60, clock=lambda: t[0], sleep=tick) == "RUNNING" and t[0] == 90
+    assert ops.poll(lambda: "EVALUATION_FAILED", str, clock=lambda: t[0], sleep=tick) == "EVALUATION_FAILED"
+    assert ops.passed(10, 12) and not ops.passed(9, 12) and not ops.passed(10, 10)
+    s = ops.redact(RuntimeError("mkdirs /Workspace/Users/a.b@x.io/armguard on dbc-1.cloud.databricks.com: cat_x.t\nline2"), "cat_x")
+    assert "@" not in s and "databricks.com" not in s and "cat_x" not in s and "line2" not in s

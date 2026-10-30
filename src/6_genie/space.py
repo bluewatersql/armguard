@@ -1,6 +1,7 @@
 """What Genie is taught (text instruction, example SQLs, joins, snippets) and build_space() -> serialized_space v2."""
 import hashlib
 
+PIT = "lower(position) RLIKE '^(rhp|lhp)$|pitcher'"  # league pitcher: RHP, LHP, Pitcher, pitcher, Left-handed Pitcher (R39)
 RISK, DAILY, ILX, CASES = "{ops}.pitcher_risk_current", "{club}.gold_pitcher_daily_features", "{ops}.il_extractions", "{ops}.case_history"
 TABLES = ("armguard.gold_appearances", "armguard.gold_pitcher_daily_features", "armguard.silver_roster", "armguard.silver_trainer_notes",
           "armguard_ops.case_history", "armguard_ops.il_extractions", "armguard_ops.pitcher_briefs", "armguard_ops.pitcher_risk_current")
@@ -53,7 +54,7 @@ def text(t):
         "role_sp = 1 for starting pitchers, 0 for relievers. Use it for workload as of a given day.",
         "pitcher_briefs: AI-written briefs (headline, why, recommended_action) per pitcher and as_of_date; for current briefs use the latest date.",
         "il_extractions: real 2025 MLB injured-list placements league-wide (public transactions parsed by AI), one row per placement with player, "
-        "position, il_type, body_part, side. A pitcher IL placement has position 'RHP' or 'LHP'. Club medical records are not in this space.",
+        f"position, il_type, body_part, side. Pitcher IL placements: WHERE {PIT}. Club medical records are not in this space.",
         "case_history: arm-care cases from the case store, one row per case with priority, status (open, acknowledged, action_set, referred, "
         "cleared, placed_il), action, n_events, hours_to_decision (case creation to first decision; NULL while undecided).",
         "silver_trainer_notes.note_text is masked for users outside the medical staff; if it is masked, say so and do not guess.")]
