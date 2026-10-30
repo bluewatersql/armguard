@@ -1,6 +1,6 @@
 import sys, pathlib
 R = pathlib.Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(R / p) for p in ("src", "src/1_lakeflow", "src/3_ml", "src/7_app", "tools")]
+sys.path[:0] = [str(R / p) for p in ("src", "src/1_lakeflow", "src/3_ml", "src/4_genai", "src/7_app", "tools")]
 import pytest
 import common as cm
 
@@ -132,3 +132,12 @@ def test_alert_runs_and_incident_recall():
     il = pd.DataFrame({"athlete_id": list("ABCDFG"), "il_date": pd.Timestamp("2025-05-01") + pd.to_timedelta([15, 15, 40, 45, 22, 90], "D")})
     assert tr.incident_recall(runs, il) == 0.5
     assert tr.false_alarm_rate(runs, il, 100) == 2.0
+
+
+def test_parse_json_obj():
+    import enrich as en
+    o = {"headline": "H", "recommended_action": "monitor"}
+    for t in (json.dumps(o), f"```json\n{json.dumps(o)}\n```", f"Sure! Here it is: {json.dumps(o)} Hope it helps."):
+        assert en.parse_json_obj(t) == o, t
+    for bad in ("no json here", "{broken", None, "[1, 2]"):
+        assert en.parse_json_obj(bad) is None

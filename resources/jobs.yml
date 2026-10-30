@@ -48,3 +48,15 @@ resources:
           spark_python_task:
             python_file: ../src/3_ml/train.py
             parameters: ["--catalog={{job.parameters.catalog}}"]
+        - task_key: t6_score
+          depends_on: [{ task_key: t5_train }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/3_ml/score.py
+            parameters: ["--catalog={{job.parameters.catalog}}", "--as_of_date={{job.parameters.as_of_date}}", "--llm_endpoint={{job.parameters.llm_endpoint}}"]
+        - task_key: t7_genai
+          depends_on: [{ task_key: t6_score }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/4_genai/enrich.py
+            parameters: ["--catalog={{job.parameters.catalog}}", "--as_of_date={{job.parameters.as_of_date}}", "--llm_endpoint={{job.parameters.llm_endpoint}}"]
