@@ -16,7 +16,13 @@ resources:
             dependencies: ["requests", "pandas", "numpy", "scikit-learn==1.6.1", "mlflow[databricks]>=3.1",
                            "databricks-sdk>=0.158", "psycopg[binary]>=3.2", "sqlalchemy>=2.0", "faker==30.8.2", "tabulate"]
       tasks:
+        - task_key: t0_setup
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/2_governance/govern.py
+            parameters: ["--mode=setup", "--catalog={{job.parameters.catalog}}", "--presenter={{job.parameters.presenter}}"]
         - task_key: t1_ingest_mlb
+          depends_on: [{ task_key: t0_setup }]
           environment_key: default
           spark_python_task:
             python_file: ../src/1_lakeflow/ingest_mlb.py
@@ -30,3 +36,9 @@ resources:
         - task_key: t3_pipeline
           depends_on: [{ task_key: t2_simulate_club }]
           pipeline_task: { pipeline_id: "${resources.pipelines.armguard_sdp.id}", full_refresh: true }
+        - task_key: t4_govern
+          depends_on: [{ task_key: t3_pipeline }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/2_governance/govern.py
+            parameters: ["--mode=govern", "--catalog={{job.parameters.catalog}}", "--presenter={{job.parameters.presenter}}"]
