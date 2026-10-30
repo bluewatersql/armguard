@@ -1,8 +1,10 @@
-"""Lakebase ops as the project owner (OAuth DB credential): --mode=sync (t8) | snapshot | smoke | reset_demo."""
+"""Lakebase ops as the project owner: --mode=sync (t8) | snapshot | smoke | reset_demo."""
 import os, re, sys, time, traceback
 
-PROJ, BR, PGDB, SMOKE = "armguard", "projects/armguard/branches/production", "databricks_postgres", "SMOKE"
-_E = {}  # the cached owner engine
+PROJ, BR, PGDB = "armguard", "projects/armguard/branches/production", "databricks_postgres"
+GRANTS = {"ops": ("USAGE ON SCHEMA ops", "SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA ops", "USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ops"),
+          "armguard_ops": ("USAGE ON SCHEMA armguard_ops", "SELECT ON ALL TABLES IN SCHEMA armguard_ops")}  # app SP
+_E = {}  # cached owner engine
 
 
 def ensure_project(w):
@@ -13,12 +15,12 @@ def ensure_project(w):
     except NotFound:
         cu = {"autoscaling_limit_min_cu": 0.5, "autoscaling_limit_max_cu": 2.0}
         p = Project.from_dict({"spec": {"display_name": "ArmGuard", "pg_version": 17, "default_endpoint_settings": cu}})
-        w.postgres.create_project(project=p, project_id=PROJ).wait()  # SPIKE Q8: .wait(), not .result()
+        w.postgres.create_project(project=p, project_id=PROJ).wait()  # SPIKE Q8: .wait()
         return "created"
 
 
 def connect(w):
-    """Owner engine on the production branch (OAuth DB credential); the URL is never printed."""
+    """Owner engine on the production branch (auto-renewed OAuth token; URL never printed)."""
     return cs.connect(w, BR, PGDB)
 
 
@@ -37,20 +39,23 @@ def sync_table(w, c):
     name, pid, upd = f"{c.catalog}.armguard_ops.pitcher_risk_synced", None, None
     get = lambda: w.postgres.get_synced_table(f"synced_tables/{name}")
     try:
-        pid = get().as_dict().get("status", {}).get("pipeline_id")
-        upd = w.pipelines.start_update(pid).update_id
+        pid = (get().as_dict().get("status") or {}).get("pipeline_id")
     except NotFound:
         w.postgres.create_synced_table(synced_table=SyncedTable.from_dict({"spec": {
             "source_table_full_name": f"{c.catalog}.armguard_ops.pitcher_risk_current", "primary_key_columns": ["athlete_id"],
             "scheduling_policy": "TRIGGERED", "branch": BR, "postgres_database": PGDB,
             "new_pipeline_spec": {"storage_catalog": c.catalog, "storage_schema": "armguard_ops"}}}), synced_table_id=name)
-    except Exception as e:  # e.g. an update is already running: wait on the table state instead
-        print("refresh:", cs.safe(e))
+    else:
+        try:
+            upd = w.pipelines.start_update(pid).update_id
+        except Exception as e:  # no/deleted pipeline or update running: poll the table
+            print("refresh:", cs.safe(e))
     t0, st = time.time(), "?"
     while time.time() - t0 < 900:
         time.sleep(15)
         try:
-            st = str(w.pipelines.get_update(pid, upd).update.state if upd else get().status.detailed_state).split(".")[-1]
+            x = getattr(w.pipelines.get_update(pid, upd).update, "state", None) if upd else getattr(get().status, "detailed_state", None)
+            st = str(x).split(".")[-1]
         except NotFound:  # just created: not visible yet
             continue
         if st in ("COMPLETED", "CANCELED") or st.endswith(("_ONLINE", "NO_PENDING_UPDATE")) or "FAILED" in st:
@@ -59,20 +64,20 @@ def sync_table(w, c):
 
 
 def grant(w):
+    """-> (log, ok): WAIT if no app; with an app SP, any failed schema fails t8."""
     try:
         sp = w.apps.get("armguard").service_principal_client_id
     except Exception:
         sp = None
     if not sp or not re.fullmatch(r"[0-9a-fA-F-]{36}", sp):
-        return "WAIT app 'armguard' not found (Task 10 re-runs t8)"
-    q = f'"{sp}"'  # an identifier, validated above
-    try:
-        tx(w, lambda cx: [cx.exec_driver_sql("GRANT " + s) for s in (
-            f"USAGE ON SCHEMA ops, armguard_ops TO {q}", f"SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA ops TO {q}",
-            f"USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ops TO {q}", f"SELECT ON ALL TABLES IN SCHEMA armguard_ops TO {q}")])
-        return "OK app SP: ops read/write, armguard_ops read"
-    except Exception as e:
-        return "WAIT grants: " + cs.safe(e)
+        return "WAIT app 'armguard' not found (Task 10 re-runs t8)", True
+    bad = []
+    for s, gs in GRANTS.items():  # a transaction per schema; sp validated above
+        try:
+            tx(w, lambda cx: [cx.exec_driver_sql(f'GRANT {g} TO "{sp}"') for g in gs])
+        except Exception as e:
+            bad.append(f"{s}: {cs.safe(e)}")
+    return ("FAIL " + "; ".join(bad), False) if bad else ("OK app SP: ops rw, armguard_ops read", True)
 
 
 def sync(c, w, sp):
@@ -80,14 +85,13 @@ def sync(c, w, sp):
     proj = ensure_project(w)
     tx(w, lambda cx: [cx.exec_driver_sql(s) for s in cs.ddl("ops")])
     state, ok = sync_table(w, c)
-    g, P, A = grant(w), c.fq("armguard_ops", "pitcher_risk_current"), c.fq("armguard_ops", "app_config")
+    (g, gok), P, A = grant(w), c.fq("armguard_ops", "pitcher_risk_current"), c.fq("armguard_ops", "app_config")
     rows = [r.asDict() for r in sp.sql(f"SELECT athlete_id, priority, risk_score, as_of_date FROM {P} WHERE priority IS NOT NULL").collect()]
     if {str(r["as_of_date"]) for r in rows} - {c.as_of_date}:
         raise SystemExit(f"pitcher_risk_current is not as of {c.as_of_date}")
     opened = tx(w, lambda cx: cs.open_cases(cx, rows, c.as_of_date, "ops"))
-    n = lambda q: tx(w, lambda cx: cx.execute(text(q), {"s": SMOKE}).scalar_one())
-    total = n("SELECT count(*) FROM ops.cases WHERE athlete_id <> :s")
-    synced = n("SELECT count(*) FROM armguard_ops.pitcher_risk_synced") if ok else "n/a"
+    total = len(tx(w, lambda cx: cs.queue(cx, "ops")))  # SMOKE excluded
+    synced = tx(w, lambda cx: cx.execute(text("SELECT count(*) FROM armguard_ops.pitcher_risk_synced")).scalar_one()) if ok else "n/a"
     sp.sql(f"CREATE TABLE IF NOT EXISTS {A} (key STRING, value STRING)")
     sp.sql(f"MERGE INTO {A} t USING (SELECT * FROM VALUES ('catalog', :cat), ('as_of_date', :d) AS v(key, value)) s ON t.key = s.key "
            "WHEN MATCHED THEN UPDATE SET t.value = s.value WHEN NOT MATCHED THEN INSERT *", args={"cat": c.catalog, "d": c.as_of_date})
@@ -96,8 +100,8 @@ def sync(c, w, sp):
         f"Project {PROJ}: {proj}; pitcher_risk_synced: {state}\nSynced rows (Postgres) {synced} vs gold rows (Delta) {gold}: "
         f"{'PASS' if synced == gold else 'MISS'}\nCases opened this run {opened} (prioritized {len(rows)}); total {total}\nApp grants: {g}\n\n"
         "Why Lakebase: staff act on alerts in an app (row-level transactions, audit trail, optimistic locks); scores stay governed in Delta.")
-    if not ok:
-        raise SystemExit(f"synced table not ready: {state}")
+    if not (ok and gok):
+        raise SystemExit(f"synced table: {state}; app grants: {g}")
 
 
 def snapshot(c, w, sp):
@@ -116,10 +120,11 @@ def snapshot(c, w, sp):
 
 def smoke(c, w):
     D, stale = "1900-01-01", "MISS: stale update was accepted"
-    tx(w, lambda cx: cs.delete_cases(cx, SMOKE, D, "ops"))  # leftover from an interrupted run
-    out = [f"opened {tx(w, lambda cx: cs.open_cases(cx, [{'athlete_id': SMOKE, 'priority': 'P1', 'risk_score': 0.99}], D, 'ops'))}"]
+    S = cs.SMOKE
+    tx(w, lambda cx: cs.delete_cases(cx, S, D, "ops"))  # leftover of an aborted run
+    out = [f"opened {tx(w, lambda cx: cs.open_cases(cx, [{'athlete_id': S, 'priority': 'P1', 'risk_score': 0.99}], D, 'ops'))}"]
     try:
-        c0 = tx(w, lambda cx: next(r for r in cs.queue(cx, "ops") if r["athlete_id"] == SMOKE))
+        c0 = tx(w, lambda cx: cs.find(cx, S, D, "ops"))
 
         def go(to, prev, who="coach", **k):  # one transaction per step
             return tx(w, lambda cx: cs.transition(cx, c0["case_id"], to, who, prev["updated_at"], schema="ops", **k))
@@ -131,7 +136,7 @@ def smoke(c, w):
             stale = "StaleUpdate caught"
         out += [f"event {e['event_id']}: {e['from_status']} -> {e['to_status']}" for e in tx(w, lambda cx: cs.events(cx, c0["case_id"], "ops"))]
     finally:
-        k = tx(w, lambda cx: cs.delete_cases(cx, SMOKE, D, "ops"))
+        k = tx(w, lambda cx: cs.delete_cases(cx, S, D, "ops"))
     cm.write_evidence(c, "t8b_smoke", "Lakebase smoke: transitions, optimistic lock, cleanup", "\n".join(out + [stale, f"deleted {k}"]))
     if stale.startswith("MISS") or k != 1:
         raise SystemExit("smoke failed")
