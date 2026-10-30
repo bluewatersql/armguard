@@ -1,7 +1,6 @@
 """Pure, seeded club simulator: GUMBO pitches -> club feeds + sealed ground truth."""
 import hashlib
 import numpy as np, pandas as pd
-from faker import Faker
 
 VERSION = "2.0"
 D, T = (lambda n: pd.Timedelta(days=int(n))), pd.Timestamp
@@ -9,14 +8,7 @@ SPLITS = {"train": (T("2025-05-15"), T("2025-06-30")), "holdout": (T("2025-07-20
 NEG = {"train": "cold_weather role_change".split(), "holdout": "cold_weather cold_weather role_change dead_arm_note".split()}
 NK = {"cold_weather": (2, 1.5), "role_change": (3, 1.2), "dead_arm_note": (1, 0)}
 V, DROPS = "release_speed spin_rate release_z extension".split(), "velo_drop spin_drop rel_z_drop ext_drop".split()
-BODY, LAB = "elbow shoulder forearm back oblique".split(), "none fatigue soreness red_flag".split()
-DEAD = "Says arm feels dead and heavy after bullpen; velocity and command fine; no pain."
-TPL = {k: t.split("|") for k, t in zip(LAB, (
-    "No complaints.|Loose {s} {p}.|Normal recovery.|On schedule.|Checked {s} {p}: fine.|Long toss fine.",
-    "Tired after big week.|Heavy {s} {p}, no pain.|Low energy.|Travel fatigue.|Tired {s} {p}, no pain.|Run down.",
-    "Mild {s} {p} soreness.|Tight {s} {p}.|Tender {s} {p}.|Sore {s} {p} on long toss.|Achy {s} {p}.|Stiff {s} {p}.",
-    "Sharp {s} {p} pain; shut down.|Tingling from {s} {p}.|Felt a pop in {s} {p}.|Pain in {s} {p} every throw."
-    "|Grip down, {s} {p} pain.|Imaging for {s} {p}."))}
+BODY = "elbow shoulder forearm back oblique".split()
 uid = lambda s: hashlib.sha256(s.encode()).hexdigest()[:16]
 
 def _g(d, *ks):
@@ -54,10 +46,11 @@ def select_incidents(apps, rng):
     sp, ids, out, busy = (apps.app_role == "SP").groupby(apps.mlbam_id).mean(), sorted(A), [], {m: [] for m in A}
     elig = lambda m, t: sum(d < t - D(21) for d in A[m]) >= 5 and any(t - D(21) <= d < t for d in A[m])
     free = lambda m, a, b: all(b <= s - D(30) or a >= e + D(30) for s, e in busy[m])
-    def injure(m, t, s, hero=False):
-        on, days = t - D(rng.integers(10, 22)), 15 if hero else int(rng.choice([15, 15, 15, 60]))
+    def injure(m, t, s, hero=False):  # hero is pinned: onset IL-21, 2.2 mph, 150 rpm
+        on, days = t - D(21 if hero else rng.integers(10, 22)), 15 if hero else int(rng.choice([15, 15, 15, 60]))
         body = "elbow" if hero else str(rng.choice(BODY)); busy[m].append((on, t + D(days)))
-        out.append((m, s, "injury", "", on, t, days, body, rng.uniform(1, 2.5), rng.uniform(80, 200), rng.uniform(.08, .2), .1, hero))
+        dr = [rng.uniform(1, 2.5), rng.uniform(80, 200), rng.uniform(.08, .2), .1]
+        out.append((m, s, "injury", "", on, t, days, body, *([2.2, 150] if hero else dr[:2]), *dr[2:], hero))
     H = T("2025-08-22")
     h = min(((min(abs(d - T("2025-08-12")) for d in A[m]), m) for m in ids if sp[m] > .5 and elig(m, H)), default=None)
     if not h: raise ValueError("insufficient eligible pitchers: hero")
@@ -68,16 +61,17 @@ def select_incidents(apps, rng):
             c = [t for t in (d + D(1) for d in A[m]) if lo <= t <= hi and elig(m, t) and free(m, t - D(21), t + D(60))]
             if c and n < 8: injure(m, c[rng.integers(len(c))], s); n += 1
         if n < 6: raise ValueError(f"insufficient eligible pitchers: {s} ({n} eligible)")
+    taken = set()  # hard negatives never share a game date (cold_weather now marks the whole game)
     for s, (lo, hi) in SPLITS.items():
         for k in NEG[s]:
             j = NK[k][0] - 1
             for m in map(int, rng.permutation(ids)):
                 L = A[m]
                 c = [i for i, d in enumerate(L) if lo <= d <= hi and 5 <= i < len(L) - j and free(m, d, L[i + j])
-                     and (k != "role_change" or sp[m] < .5)]
+                     and (k != "role_change" or sp[m] < .5) and not taken & set(L[i:i + j + 1])]
                 if c: break
             else: raise ValueError(f"insufficient eligible pitchers: {s} ({k})")
-            i = c[rng.integers(len(c))]; busy[m].append((L[i], L[i + j]))
+            i = c[rng.integers(len(c))]; busy[m].append((L[i], L[i + j])); taken |= set(L[i:i + j + 1])
             out.append((m, s, "hard_negative", k, L[i], L[i], 0, "", NK[k][1], 0, 0, 0, False))
     df = pd.DataFrame(out, columns="mlbam_id split kind sub_kind true_onset_date il_date il_days body_part".split() + DROPS + ["is_hero"])
     df.insert(0, "incident_id", [f"inc_{i + 1:02d}" for i in df.index])
@@ -85,7 +79,7 @@ def select_incidents(apps, rng):
 
 def apply_precursors(pitches, incidents):
     p = pitches.copy(); p["game_date"] = dd = pd.to_datetime(p.game_date)
-    keep, dup = pd.Series(True, index=p.index), []
+    keep, dup, cold = pd.Series(True, index=p.index), [], set()
     for r in incidents.to_dict("records"):
         m, k, il = p.mlbam_id == r["mlbam_id"], r["sub_kind"], r["il_date"]
         if r["kind"] == "injury":
@@ -94,61 +88,11 @@ def apply_precursors(pitches, incidents):
             continue
         w = m & dd.isin(sorted(dd[m & (dd >= il)].unique())[:NK[k][0]])
         p.loc[w, "release_speed"] -= NK[k][1]
-        if k == "cold_weather": p.loc[w, "temp_f"] = 44
-        if k == "role_change":  # x1.6 pitches
-            dup += [g.head(round(len(g) * .6)).assign(pitch_uid=g.pitch_uid.map(lambda u: uid(u + "r"))) for _, g in p[w].groupby(dd)]
+        if k == "cold_weather": cold |= set(p.loc[w, "game_pk"])  # whole game is cold, not only his rows
+        for _, g in p[w].groupby(dd) if k == "role_change" else []:  # RP -> SP: copies until >= 60 pitches, >= x1.6
+            n = len(g); x = g.iloc[np.arange(max(60, -(-16 * n // 10)) - n) % n]
+            dup.append(x.assign(pitch_uid=[uid(u + "r" * (1 + i // n)) for i, u in enumerate(x.pitch_uid)]))
     p = pd.concat([p[keep], *dup], ignore_index=True).astype({"temp_f": "Int64"})
+    if cold: p.loc[p.game_pk.isin(cold), "temp_f"] = 44
     p["app_role"] = np.where(p.groupby(["mlbam_id", "game_date"]).pitch_uid.transform("size") >= 50, "SP", "RP")
     return p
-
-def make_roster(mlbam_ids, rng, hands, real_names):
-    f, used, rows = Faker("en_US"), set(real_names), []
-    f.seed_instance(int(rng.integers(1e9)))
-    for i, m in enumerate(sorted({int(x) for x in mlbam_ids}), 1):
-        while (n := f"{f.first_name_male()} {f.last_name()}") in used: pass
-        used.add(n); rows.append((f"A{i:02d}", m, n, hands.get(m, "R")))
-    return pd.DataFrame(rows, columns="athlete_id mlbam_id display_name throws".split())
-
-def make_wellness(roster, apps, incidents, rng):
-    inj, out = incidents[incidents.kind == "injury"], []
-    for r in roster.sort_values("athlete_id").itertuples():
-        a = apps[apps.mlbam_id == r.mlbam_id].groupby("game_date").pitches.sum()
-        if a.empty: continue
-        d = pd.date_range(a.index.min(), a.index.max()); n = len(d)
-        s = rng.poisson(1.5, n) + sum(np.round(_ramp(d, i.true_onset_date, i.il_date) * rng.uniform(2, 4))
-                                      for i in inj[inj.mlbam_id == r.mlbam_id].itertuples())
-        p3 = a.reindex(d, fill_value=0).rolling(3, 1).sum().to_numpy()
-        out.append(pd.DataFrame({"athlete_id": r.athlete_id, "survey_date": d.strftime("%Y-%m-%d"),
-            "arm_soreness_0_10": np.clip(s, 0, 10).astype(int), "fatigue_0_10": np.minimum(10, rng.poisson(1, n) + p3 // 40).astype(int),
-            "sleep_hours": rng.normal(7.5, .6, n).round(1)}))
-    return pd.concat(out, ignore_index=True)
-
-def make_notes(roster, apps, incidents, rng):
-    th, aid, rows = dict(zip(roster.mlbam_id, roster.throws)), dict(zip(roster.mlbam_id, roster.athlete_id)), []
-    def note(m, day, lab, part=None, text=None):
-        s = "right" if th[m] == "R" else "left"
-        rows.append((T(day), aid[m], text or str(rng.choice(TPL[lab])).format(s=s, p=part or rng.choice(BODY)), lab))
-    for m, g in apps.groupby("mlbam_id"):  # ~8 per active month
-        for mo in sorted(g.game_date.dt.to_period("M").unique()):
-            for _ in range(rng.poisson(8)): note(m, mo.start_time + D(rng.integers(mo.days_in_month)), str(rng.choice(LAB, p=[.64, .2, .14, .02])))
-    inj = incidents[incidents.kind == "injury"]
-    for j in rng.permutation(len(inj))[:-(-3 * len(inj) // 4)]:  # 75% get a pre-IL note
-        i = inj.iloc[j]; note(i.mlbam_id, i.il_date - D(rng.integers(1, 8)), str(rng.choice(LAB[2:])), i.body_part)
-    for i in incidents.itertuples():
-        if i.is_hero: note(i.mlbam_id, "2025-08-13", "red_flag", i.body_part)
-        if i.sub_kind == "dead_arm_note": note(i.mlbam_id, i.il_date, "fatigue", text=DEAD)
-    n = pd.DataFrame(rows, columns="note_ts athlete_id note_text true_category".split())
-    n["note_ts"] += pd.to_timedelta(rng.integers(480, 1140, len(n)), "min")
-    n.insert(2, "author_role", rng.choice(["athletic_trainer", "pitching_coach", "team_physician"], len(n)))
-    n = n.sort_values(["note_ts", "athlete_id"], ignore_index=True)
-    n.insert(0, "note_id", [f"N{i + 1:05d}" for i in n.index]); n["note_ts"] = n.note_ts.dt.strftime("%Y-%m-%d %H:%M:%S")
-    return n.drop(columns="true_category"), n[["note_id", "true_category"]]
-
-def make_il_events(incidents, roster):
-    R, rows = roster.set_index("mlbam_id"), []
-    for k, i in enumerate(incidents[incidents.kind == "injury"].itertuples()):
-        r, d = R.loc[i.mlbam_id], int(i.il_days); w = f"Cascadia Ospreys %s {r.throws}HP {r.display_name} %s the {d}-day injured list."
-        x = f" {'Right' if r.throws == 'R' else 'Left'} {i.body_part} {['strain', 'inflammation', 'tightness'][k % 3]}."
-        rows += [(f"EV{2 * k + 1:03d}", r.athlete_id, str(i.il_date.date()), "placed", w % ("placed", "on") + x),
-                 (f"EV{2 * k + 2:03d}", r.athlete_id, str((i.il_date + D(d)).date()), "activated", w % ("activated", "from"))]
-    return pd.DataFrame(rows, columns="event_id athlete_id event_date action description".split())

@@ -60,6 +60,7 @@ def test_skip_existing(tmp_path):
 
 import numpy as np, pandas as pd
 import sim_core as sc
+import simulate_club as scl
 
 def _game(home=136, temp="72"):
     pe = lambda n, v: {"isPitch": True, "pitchNumber": n, "details": {"type": {"code": "FF"}},
@@ -112,10 +113,11 @@ def test_precursor_concave_ramp_and_suppression():
     assert "c" not in out.index
 
 def test_roster_rejects_real_names_and_il_text():
-    ros = sc.make_roster([11], np.random.default_rng(1), {11: "R"}, {"Real Person"})
-    assert ros.display_name.iloc[0] != "Real Person" and ros.athlete_id.iloc[0] == "A01"
+    drawn = scl.make_roster([11], np.random.default_rng(1), {11: "R"}, set()).display_name.iloc[0]
+    ros = scl.make_roster([11], np.random.default_rng(1), {11: "R"}, {drawn})
+    assert ros.display_name.iloc[0] != drawn and ros.athlete_id.iloc[0] == "A01"
     inc = pd.DataFrame([{"incident_id": "i1", "mlbam_id": 11, "kind": "injury", "il_date": pd.Timestamp("2025-07-21"),
                          "il_days": 15, "body_part": "forearm"}])
-    ev = sc.make_il_events(inc, ros)
+    ev = scl.make_il_events(inc, ros)
     assert ev[ev.action == "placed"].description.iloc[0].startswith(f"Cascadia Ospreys placed RHP {ros.display_name.iloc[0]} on the 15-day injured list.")
     assert (ev.action == "activated").sum() == 1
