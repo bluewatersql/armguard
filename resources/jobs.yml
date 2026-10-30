@@ -21,3 +21,9 @@ resources:
           spark_python_task:
             python_file: ../src/1_lakeflow/ingest_mlb.py
             parameters: ["--catalog={{job.parameters.catalog}}", "--team_id={{job.parameters.team_id}}"]
+        - task_key: t2_simulate_club
+          depends_on: [{ task_key: t1_ingest_mlb }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/1_lakeflow/simulate_club.py
+            parameters: ["--catalog={{job.parameters.catalog}}", "--team_id={{job.parameters.team_id}}"]
