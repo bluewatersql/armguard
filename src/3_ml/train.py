@@ -8,6 +8,14 @@ def load_rows(sp, c):
     d = sp.table(c.fq("armguard", "gold_pitcher_daily_features")).filter(
         "NOT on_il AND n_prior_apps >= 5 AND days_since_app <= 30").toPandas()
     return d.astype(dict.fromkeys(FEATURES, float)).assign(feature_date=pd.to_datetime(d.feature_date), label=d.label_il_14d)
+def stable_folds(groups, k=4):
+    """GroupKFold's greedy fold assignment with a deterministic tie-break on group label."""
+    sizes = groups.groupby(groups).size().sort_index().sort_values(ascending=False, kind="stable")
+    load, fold = [0] * k, {}
+    for a, n in sizes.items():
+        fold[a] = min(range(k), key=lambda i: load[i])
+        load[fold[a]] += n
+    return groups.map(fold).to_numpy()
 def alert_runs(df, flag):
     d = df[df[flag]].sort_values(["athlete_id", "feature_date"])
     b = (d.feature_date.diff().dt.days != 1) | (d.athlete_id != d.athlete_id.shift())
@@ -30,8 +38,8 @@ def main(cm):
     d = load_rows(sp, c).query(f"feature_date <= '{END}'")
     il = sp.sql(f"SELECT athlete_id, TIMESTAMP(event_date) il_date FROM {c.fq('armguard', 'silver_il_events')} "
         f"WHERE action = 'placed' AND event_date <= '{END}'").toPandas()
-    m, X, y = se.HistGradientBoostingClassifier(max_depth=3, max_iter=100, min_samples_leaf=50, class_weight="balanced"), d[FEATURES], d.label
-    oof = ms.cross_val_predict(m, X, y, groups=d.athlete_id, cv=ms.GroupKFold(4), method="predict_proba")[:, 1]
+    m, X, y = se.HistGradientBoostingClassifier(max_depth=3, max_iter=100, min_samples_leaf=50, class_weight="balanced", random_state=0), d[FEATURES], d.label
+    oof = ms.cross_val_predict(m, X, y, cv=ms.PredefinedSplit(stable_folds(d.athlete_id)), method="predict_proba")[:, 1]
     t, rc, fa = min(((t, *ev(d, oof >= t, il)) for t in [i / 100 for i in range(5, 96)]), key=lambda s: (max(s[2], 3), -s[1] * (s[2] <= 3)))
     el = round(0.6 * t, 3)
     sr, sf = ev(d, d.velo_delta.map(cm.baseline_flag), il)

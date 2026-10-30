@@ -122,7 +122,6 @@ def govern(spark, cfg, log):
             for t in ts:
                 step(spark, f"GRANT SELECT ON TABLE {C}.{s}.{t} TO {P}", log, f"grant select {s}.{t}")
         step(spark, f"GRANT EXECUTE ON FUNCTION {G}.mask_medical TO {P}", log, "grant execute mask_medical")
-        step(spark, f"GRANT EXECUTE ON MODEL {C}.armguard_ops.injury_risk TO {P}", log, "grant execute model injury_risk")
     else:
         log.append("WAIT app SP not found (re-run after Task 10)")
     for t, d in (("gold_appearances", "Pitcher appearance workload; own-baseline velocity deltas"),

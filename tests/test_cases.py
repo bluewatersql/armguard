@@ -1,9 +1,11 @@
 import sys, pathlib
 R = pathlib.Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(R / "src/7_app"), str(R / "src/6_genie")]
+sys.path[:0] = [str(R / "src/7_app"), str(R / "src/6_genie"), str(R / "src/3_ml")]
 import pytest
 from sqlalchemy import create_engine
 import cases as cs
+import numpy as np, pandas as pd
+import train
 
 @pytest.fixture
 def conn():
@@ -111,3 +113,15 @@ def test_app_buttons_are_playbook_and_legal_from_open():
     assert {a for _, _, a in acts} - {None} <= {"monitor", "limit_pitches", "extra_rest", "bullpen_only", "refer_medical"}
     assert all(to in cs.TRANSITIONS["open"] for _, to, _ in acts) and "text_area" not in src  # no free-text note input
     assert "Data © MLB Advanced Media (statsapi.mlb.com) · players pseudonymized · medical data synthetic" in src
+
+def test_stable_folds_deterministic_balanced_shuffle_invariant():
+    sizes = {"A03": 3, "A01": 3, "A02": 3, "A05": 2, "A04": 2, "A06": 1}
+    g = pd.Series([a for a, n in sizes.items() for _ in range(n)])
+    f = train.stable_folds(g)
+    got = dict(zip(g, f))
+    assert got == {"A01": 0, "A02": 1, "A03": 2, "A04": 3, "A05": 3, "A06": 0}
+    load = np.bincount(f, minlength=4)
+    assert load.tolist() == [4, 3, 3, 4]
+    perm = np.random.RandomState(1).permutation(len(g))
+    gs = g.iloc[perm].reset_index(drop=True)
+    assert dict(zip(gs, train.stable_folds(gs))) == got
