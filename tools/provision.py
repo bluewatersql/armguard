@@ -9,7 +9,7 @@ def db(profile, *args):
 
 
 def step(n, name, status, detail=""):
-    detail = re.sub(r"https?://\S+|\S+@\S+", "<redacted>", detail.strip())[-300:]  # never print hosts or emails
+    detail = re.sub(r"https?://\S+|\S+@\S+|[\w.-]+\.databricks\.com\b", "<redacted>", detail.strip())[-300:]  # no hosts/emails
     print(f"STEP {n} {name} {status}" + (f"  {detail}" if detail else ""), flush=True)
     return status != "FAIL"
 
@@ -62,10 +62,13 @@ def bundle(a):
 
 
 def bring_up(a):
-    """Steps 4-9: full daily run, start the app, re-run t4/t8/t9 so grants find the app SP, restart (MASK_CHECK runs
-    after the grants), smoke, then print the app state and URL."""
+    """Steps 4-9: full daily run (--skip-daily: SKIP), start the app, re-run t4/t8/t9 so grants find the app SP,
+    restart (MASK_CHECK runs after the grants), smoke, then print the app state and URL."""
     for n, name, args in ((4, "daily", ["armguard_daily"]), (5, "app_start", ["armguard_app"]),
                           (6, "app_grants", ["armguard_daily", "--only", "t4_govern,t8_lakebase,t9_genie"])):
+        if n == 4 and a.skip_daily:
+            step(4, "daily", "SKIP", "--skip-daily")
+            continue
         r = db(a.profile, "bundle", "run", *args, "-t", a.target)
         if not step(n, name, "FAIL" if r.returncode else "OK", r.stdout + r.stderr if r.returncode else ""):
             return False
@@ -77,7 +80,11 @@ def bring_up(a):
     if not step(8, "smoke", "FAIL" if r.returncode else "OK", r.stdout + r.stderr if r.returncode else ""):
         return False
     for _ in range(30):  # the app status lags compute start
-        d = json.loads(db(a.profile, "apps", "get", "armguard", "-o", "json").stdout or "{}")
+        r = db(a.profile, "apps", "get", "armguard", "-o", "json")
+        try:
+            d = json.loads(r.stdout)
+        except ValueError:
+            return step(9, "app", "FAIL", "apps get returned no JSON: " + r.stdout + r.stderr)
         if (state := d.get("app_status", {}).get("state")) == "RUNNING":
             break
         time.sleep(10)
@@ -92,6 +99,7 @@ def main():
     ap.add_argument("--catalog", required=True)
     ap.add_argument("--target", default="fevm")
     ap.add_argument("--create-catalog", action="store_true")
+    ap.add_argument("--skip-daily", action="store_true", help="already-built workspace: skip the full daily run (step 4)")
     ap.add_argument("--teardown", action="store_true")
     ap.add_argument("--yes", action="store_true")
     a = ap.parse_args()
