@@ -1,0 +1,23 @@
+resources:
+  jobs:
+    armguard_daily:
+      name: armguard-daily
+      parameters:
+        - { name: catalog, default: "${var.catalog}" }
+        - { name: team_id, default: "${var.team_id}" }
+        - { name: as_of_date, default: "${var.as_of_date}" }
+        - { name: llm_endpoint, default: "${var.llm_endpoint}" }
+        - { name: judge_endpoint, default: "${var.judge_endpoint}" }
+        - { name: presenter, default: "${var.presenter}" }
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "3"
+            dependencies: ["requests", "pandas", "numpy", "scikit-learn==1.6.1", "mlflow[databricks]>=3.1",
+                           "databricks-sdk>=0.158", "psycopg[binary]>=3.2", "sqlalchemy>=2.0", "faker==30.8.2", "tabulate"]
+      tasks:
+        - task_key: t1_ingest_mlb
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/1_lakeflow/ingest_mlb.py
+            parameters: ["--catalog={{job.parameters.catalog}}", "--team_id={{job.parameters.team_id}}"]

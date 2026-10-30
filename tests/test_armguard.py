@@ -36,3 +36,23 @@ def test_bootstrap_uses_argv0(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "path", list(sys.path))
     cm.bootstrap()
     assert sys.path[:2] == [str(script.parent), str(tmp_path)]
+
+
+import json
+import ingest_mlb as im
+
+def test_final_games_only():
+    S = {"dates": [{"games": [{"gamePk": 1, "status": {"abstractGameState": "Final"}},
+        {"gamePk": 2, "status": {"abstractGameState": "Preview"}},
+        {"gamePk": 3, "status": {"abstractGameState": "Final", "detailedState": "Postponed"}},
+        {"gamePk": 1, "status": {"abstractGameState": "Final"}}]}]}
+    assert im.final_game_pks(S) == [1]
+
+def test_month_windows():
+    assert im.month_windows("2025-03-15", "2025-05-02") == [("2025-03-15", "2025-03-31"),
+        ("2025-04-01", "2025-04-30"), ("2025-05-01", "2025-05-02")]
+
+def test_skip_existing(tmp_path):
+    p = tmp_path / "g.json"; assert im.needs_fetch(str(p))
+    p.write_text(json.dumps({"a": 1})); assert not im.needs_fetch(str(p))
+    (tmp_path / "e.json").write_text(""); assert im.needs_fetch(str(tmp_path / "e.json"))

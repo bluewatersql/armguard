@@ -5,3 +5,4 @@ __pycache__/
 .env
 local_data/
 .superpowers/
+.omc/
