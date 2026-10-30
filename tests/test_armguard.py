@@ -1,6 +1,6 @@
 import sys, pathlib
 R = pathlib.Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(R / p) for p in ("src", "src/1_lakeflow", "src/7_app", "tools")]
+sys.path[:0] = [str(R / p) for p in ("src", "src/1_lakeflow", "src/3_ml", "src/7_app", "tools")]
 import pytest
 import common as cm
 
@@ -121,3 +121,13 @@ def test_roster_rejects_real_names_and_il_text():
     ev = scl.make_il_events(inc, ros)
     assert ev[ev.action == "placed"].description.iloc[0].startswith(f"Cascadia Ospreys placed RHP {ros.display_name.iloc[0]} on the 15-day injured list.")
     assert (ev.action == "activated").sum() == 1
+
+def test_alert_runs_and_incident_recall():
+    import train as tr
+    def days(a, ds):
+        return [{"athlete_id": a, "feature_date": pd.Timestamp("2025-05-01") + pd.Timedelta(days=k), "f": True} for k in ds]
+    df = pd.DataFrame(days("A", [3, 4, 5]) + days("B", [10]) + days("C", [0, 1]) + days("D", [40, 41]))
+    runs = tr.alert_runs(df, "f")
+    assert sorted(runs.athlete_id) == ["A", "C", "D"]
+    il = pd.DataFrame({"athlete_id": list("ABCD"), "il_date": pd.Timestamp("2025-05-01") + pd.to_timedelta([15, 15, 40, 45], "D")})
+    assert tr.incident_recall(runs, il) == 0.5

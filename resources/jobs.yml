@@ -42,3 +42,9 @@ resources:
           spark_python_task:
             python_file: ../src/2_governance/govern.py
             parameters: ["--mode=govern", "--catalog={{job.parameters.catalog}}", "--presenter={{job.parameters.presenter}}"]
+        - task_key: t5_train
+          depends_on: [{ task_key: t4_govern }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/3_ml/train.py
+            parameters: ["--catalog={{job.parameters.catalog}}"]
