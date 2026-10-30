@@ -103,3 +103,11 @@ def test_genie_pitcher_rule_poll_pass_redact():
     assert ops.passed(10, 12) and not ops.passed(9, 12) and not ops.passed(10, 10)
     s = ops.redact(RuntimeError("mkdirs /Workspace/Users/a.b@x.io/armguard on dbc-1.cloud.databricks.com: cat_x.t\nline2"), "cat_x")
     assert "@" not in s and "databricks.com" not in s and "cat_x" not in s and "line2" not in s
+
+def test_app_buttons_are_playbook_and_legal_from_open():
+    import ast
+    src = (R / "src/7_app/app.py").read_text()
+    acts = next(ast.literal_eval(n.value) for n in ast.parse(src).body if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "ACTIONS")
+    assert {a for _, _, a in acts} - {None} <= {"monitor", "limit_pitches", "extra_rest", "bullpen_only", "refer_medical"}
+    assert all(to in cs.TRANSITIONS["open"] for _, to, _ in acts) and "text_area" not in src  # no free-text note input
+    assert "Data © MLB Advanced Media (statsapi.mlb.com) · players pseudonymized · medical data synthetic" in src

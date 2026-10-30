@@ -1,5 +1,5 @@
 """Idempotent ArmGuard provisioning. Each step prints STEP <n> <name> OK|SKIP|FAIL."""
-import argparse, json, pathlib, subprocess, sys
+import argparse, json, pathlib, re, subprocess, sys, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -9,7 +9,8 @@ def db(profile, *args):
 
 
 def step(n, name, status, detail=""):
-    print(f"STEP {n} {name} {status}" + (f"  {detail.strip()[:300]}" if detail else ""), flush=True)
+    detail = re.sub(r"https?://\S+|\S+@\S+", "<redacted>", detail.strip())[-300:]  # never print hosts or emails
+    print(f"STEP {n} {name} {status}" + (f"  {detail}" if detail else ""), flush=True)
     return status != "FAIL"
 
 
@@ -60,6 +61,31 @@ def bundle(a):
     return step(3, "bundle", "OK")
 
 
+def bring_up(a):
+    """Steps 4-9: full daily run, start the app, re-run t4/t8/t9 so grants find the app SP, restart (MASK_CHECK runs
+    after the grants), smoke, then print the app state and URL."""
+    for n, name, args in ((4, "daily", ["armguard_daily"]), (5, "app_start", ["armguard_app"]),
+                          (6, "app_grants", ["armguard_daily", "--only", "t4_govern,t8_lakebase,t9_genie"])):
+        r = db(a.profile, "bundle", "run", *args, "-t", a.target)
+        if not step(n, name, "FAIL" if r.returncode else "OK", r.stdout + r.stderr if r.returncode else ""):
+            return False
+    for cmd in ("stop", "start"):
+        if (r := db(a.profile, "apps", cmd, "armguard")).returncode:
+            return step(7, "app_restart", "FAIL", r.stderr)
+    step(7, "app_restart", "OK")
+    r = db(a.profile, "bundle", "run", "armguard_ops_tools", "--params", "mode=smoke", "-t", a.target)
+    if not step(8, "smoke", "FAIL" if r.returncode else "OK", r.stdout + r.stderr if r.returncode else ""):
+        return False
+    for _ in range(30):  # the app status lags compute start
+        d = json.loads(db(a.profile, "apps", "get", "armguard", "-o", "json").stdout or "{}")
+        if (state := d.get("app_status", {}).get("state")) == "RUNNING":
+            break
+        time.sleep(10)
+    ok = step(9, "app", "OK" if state == "RUNNING" else "FAIL", f"state {state}")
+    print("APP_URL", d.get("url"))  # console only: the URL holds the workspace host, never commit it
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", required=True)
@@ -72,7 +98,7 @@ def main():
     if a.teardown:
         print("teardown not implemented until Task 13")
         return 1
-    return 0 if all(f(a) for f in (lakebase, catalog, overrides, bundle)) else 1
+    return 0 if all(f(a) for f in (lakebase, catalog, overrides, bundle, bring_up)) else 1
 
 
 if __name__ == "__main__":

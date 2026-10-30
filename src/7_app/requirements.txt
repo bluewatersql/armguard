@@ -1,0 +1,6 @@
+streamlit>=1.38
+databricks-sdk>=0.158
+databricks-sql-connector>=3.4
+psycopg[binary]>=3.2
+sqlalchemy>=2.0
+pandas

@@ -1,0 +1,19 @@
+resources:
+  apps:
+    armguard_app:
+      name: armguard
+      description: Pitcher arm-care case queue (Cascadia Ospreys demo)
+      source_code_path: ../src/7_app
+      config:
+        command: ["streamlit", "run", "app.py"]
+        env:
+          - { name: ARMGUARD_CATALOG, value: "${var.catalog}" }
+          - { name: OPS_JOB_ID, value: "${resources.jobs.armguard_ops_tools.id}" }
+          - { name: LAKEBASE_ENDPOINT, value_from: lakebase }
+          - { name: DATABRICKS_WAREHOUSE_ID, value_from: wh }
+      resources:
+        - name: lakebase
+          postgres: { branch: projects/armguard/branches/production,
+                      database: "projects/armguard/branches/production/databases/${var.lakebase_db_id}", permission: CAN_CONNECT_AND_CREATE }
+        - { name: wh, sql_warehouse: { id: "${resources.sql_warehouses.armguard_wh.id}", permission: CAN_USE } }
+        - { name: ops_job, job: { id: "${resources.jobs.armguard_ops_tools.id}", permission: CAN_MANAGE_RUN } }
