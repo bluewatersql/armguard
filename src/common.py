@@ -4,6 +4,7 @@ from dataclasses import dataclass, fields
 
 PLAYBOOK = ("monitor", "limit_pitches", "extra_rest", "bullpen_only", "refer_medical")
 WINDOWS = {3, 7, 10, 14, 21, 28, 30}
+HERO = "A22"  # pinned storyline pitcher (t2)
 
 @dataclass(frozen=True)
 class Cfg:

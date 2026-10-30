@@ -141,3 +141,12 @@ def test_parse_json_obj():
         assert en.parse_json_obj(t) == o, t
     for bad in ("no json here", "{broken", None, "[1, 2]"):
         assert en.parse_json_obj(bad) is None
+
+
+def test_top_drivers_rank_and_format():
+    import score as sc
+    a = pd.Timestamp("2025-08-15")
+    h = pd.DataFrame({"athlete_id": ["A"] * 4 + ["B"], "feature_date": list(pd.date_range(end=a, periods=4)) + [a],
+                      "velo_delta": [0, 0, 0, -3.0, 1], "soreness_3d": [1, 2, 1, 2.0, 1], "acwr": [1, 1.2, 1, 1.6, 1],
+                      "spin_delta": [5.0] * 5, "pitches_7d": [50, 60, 50, 104.0, 9]})
+    assert sc.top_drivers(h, a).tolist() == ["velo_delta -3; pitches_7d 104; acwr 1.6", ""]
