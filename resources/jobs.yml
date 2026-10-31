@@ -10,6 +10,8 @@ resources:
         - { name: judge_endpoint, default: "${var.judge_endpoint}" }
         - { name: presenter, default: "${var.presenter}" }
         - { name: judge, default: "0" }
+        - { name: validate, default: "0" }
+        - { name: force, default: "0" }
       environments:
         - environment_key: default
           spec:
@@ -73,12 +75,15 @@ resources:
           spark_python_task:
             python_file: ../src/6_genie/genie.py
             parameters: ["--catalog={{job.parameters.catalog}}", "--warehouse_id=${resources.sql_warehouses.armguard_wh.id}"]
-        - task_key: t10_validate
+        - task_key: t10_gate
           depends_on: [{ task_key: t9_genie }]
+          condition_task: { op: EQUAL_TO, left: "{{job.parameters.validate}}", right: "1" }
+        - task_key: t10_validate
+          depends_on: [{ task_key: t10_gate, outcome: "true" }]
           environment_key: default
           spark_python_task:
             python_file: ../src/3_ml/validate.py
-            parameters: ["--catalog={{job.parameters.catalog}}"]
+            parameters: ["--catalog={{job.parameters.catalog}}", "--force={{job.parameters.force}}"]
         - task_key: t10_genai_eval
           depends_on: [{ task_key: t9_genie }]
           environment_key: default

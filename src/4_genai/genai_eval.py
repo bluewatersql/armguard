@@ -5,7 +5,7 @@ import pandas as pd
 LABELS, EXP, PV = ["none", "fatigue", "soreness", "red_flag"], "/Shared/armguard-eval", "v1"
 EV = ("ts TIMESTAMP, prompt_version STRING, n_briefs INT, extract_n INT, extract_correct INT, extract_acc DOUBLE, triage_n INT, "
       "triage_macro_f1 DOUBLE, grounded DOUBLE, no_leak DOUBLE, playbook DOUBLE, judge DOUBLE, notes_readable BOOLEAN, mode STRING, "
-      "mlflow_run_id STRING")
+      "mlflow_run_id STRING, n_fallback INT, extract_found INT, triage_scored INT")
 _W = re.compile(r"[a-z0-9']+")
 
 
@@ -20,12 +20,19 @@ def leaks(response, notes, n=6):
     return any(r & grams(t, n) for t in notes)
 
 
+def grounded(cm, inputs, outputs, expectations):
+    return not expectations["fallback"] and cm.numbers_grounded(outputs["response"], json.loads(inputs["facts"]))
+
+
+def playbook(cm, expectations):
+    return not expectations["fallback"] and expectations["action"] in cm.PLAYBOOK
+
+
 def checks(cm, rec, notes):
-    """The three scorer values for one eval record; the MLflow scorers call the same expressions."""
-    o = rec["outputs"]["response"]
-    return {"brief_grounded": cm.numbers_grounded(o, json.loads(rec["inputs"]["facts"])),
-            "no_medical_leak": not leaks(o, notes.get(rec["inputs"]["athlete_id"], ())),
-            "action_in_playbook": rec["expectations"]["action"] in cm.PLAYBOOK}
+    """The three scorer values for one eval record (a template/fallback brief fails grounded and playbook); MLflow scorers share them."""
+    i, o, x = rec["inputs"], rec["outputs"], rec["expectations"]
+    return {"brief_grounded": grounded(cm, i, o, x), "no_medical_leak": not leaks(o["response"], notes.get(i["athlete_id"], ())),
+            "action_in_playbook": playbook(cm, x)}
 
 
 def mlflow_eval(cm, c, data, notes, rates, judge):
@@ -34,8 +41,8 @@ def mlflow_eval(cm, c, data, notes, rates, judge):
     from mlflow.genai.scorers import scorer
 
     @scorer
-    def brief_grounded(inputs, outputs):
-        return cm.numbers_grounded(outputs["response"], json.loads(inputs["facts"]))
+    def brief_grounded(inputs, outputs, expectations):
+        return grounded(cm, inputs, outputs, expectations)
 
     @scorer
     def no_medical_leak(inputs, outputs):
@@ -43,7 +50,7 @@ def mlflow_eval(cm, c, data, notes, rates, judge):
 
     @scorer
     def action_in_playbook(expectations):
-        return expectations["action"] in cm.PLAYBOOK
+        return playbook(cm, expectations)
 
     sc = [brief_grounded, no_medical_leak, action_in_playbook]
     if judge:
@@ -72,37 +79,45 @@ def main(cm):
     judge = any(a == "--judge=1" for a in sys.argv[1:])
     A, O = (lambda t: c.fq("armguard", t)), (lambda t: c.fq("armguard_ops", t))
     x = sp.sql(f"""SELECT count(*) n, count(e.event_id) extracted, count_if(lower(e.body_part) = lower(i.body_part)) ok
-      FROM {c.fq('armguard_gt', 'incidents')} i JOIN {A('silver_il_events')} s
+      FROM {c.fq('armguard_gt', 'incidents')} i LEFT JOIN {A('silver_il_events')} s
         ON s.athlete_id = i.athlete_id AND s.event_date = i.il_date AND s.action = 'placed'
       LEFT JOIN {A('club_il_extractions')} e ON e.event_id = s.event_id WHERE i.kind = 'injury'""").first()
     acc = x.ok / x.n if x.n else None
-    tri = sp.sql(f"SELECT l.true_category y, t.note_flag p FROM {O('note_triage')} t JOIN {c.fq('armguard_gt', 'note_labels')} l "
-                 "USING (note_id)").toPandas()
-    cmx = pd.DataFrame(confusion_matrix(tri.y, tri.p, labels=LABELS), index=[f"true {k}" for k in LABELS], columns=LABELS)
+    tri = sp.sql(f"SELECT l.true_category y, coalesce(t.note_flag, 'missing') p FROM {c.fq('armguard_gt', 'note_labels')} l "
+                 f"LEFT JOIN {O('note_triage')} t USING (note_id)").toPandas()  # untriaged notes count as wrong
+    cmx = pd.DataFrame(confusion_matrix(tri.y, tri.p, labels=LABELS + ["missing"]), index=[f"true {k}" for k in LABELS + ["missing"]],
+                       columns=LABELS + ["missing"]).iloc[:len(LABELS)]
+    scored = int((tri.p != "missing").sum())
     f1 = float(f1_score(tri.y, tri.p, labels=LABELS, average="macro", zero_division=0))
-    b = sp.sql(f"SELECT athlete_id, as_of_date, headline, why, recommended_action, facts_json FROM {O('pitcher_briefs')} "
+    b = sp.sql(f"SELECT athlete_id, as_of_date, headline, why, recommended_action, fallback, facts_json FROM {O('pitcher_briefs')} "
                "WHERE prompt_version = :v ORDER BY as_of_date, athlete_id", args={"v": PV}).toPandas()
+    b["fallback"] = b.fallback.fillna(True).astype(bool)  # unknown -> treated as a fallback (fails A5)
     notes = {}
     for a, t in sp.sql(f"SELECT athlete_id, note_text FROM {A('silver_trainer_notes')}").collect():
         notes.setdefault(a, []).append(t or "")
     readable = bool(notes) and not any(t.startswith("[REDACTED") for v in notes.values() for t in v)
     data = [{"inputs": {"facts": r.facts_json, "athlete_id": r.athlete_id}, "outputs": {"response": f"{r.headline} {r.why}"},
-             "expectations": {"action": r.recommended_action}} for r in b.itertuples()]
+             "expectations": {"action": r.recommended_action, "fallback": bool(r.fallback)}} for r in b.itertuples()]
     v = pd.DataFrame([checks(cm, d, notes) for d in data], columns=["brief_grounded", "no_medical_leak", "action_in_playbook"])
     rt = {k: float(v[k].mean()) if len(v) else None for k in v.columns}
+    nfb = int(b.fallback.sum())
     run_id, mode, jm, agree = mlflow_eval(cm, c, data, notes, {**rt, "extract_acc": acc, "triage_macro_f1": f1}, judge)
     T = O("eval_genai")
     sp.createDataFrame([(dt.datetime.now(dt.timezone.utc), PV, len(b), x.n, x.ok, acc, len(tri), f1, rt["brief_grounded"],
-                         rt["no_medical_leak"], rt["action_in_playbook"], jm, readable, mode, run_id)], EV).write.mode("append").saveAsTable(T)
-    hist = sp.sql(f"SELECT date_format(ts, 'yyyy-MM-dd HH:mm') ts, n_briefs, round(extract_acc, 3) extract_acc, round(triage_macro_f1, 3) f1, "
+                         rt["no_medical_leak"], rt["action_in_playbook"], jm, readable, mode, run_id, nfb, x.extracted, scored)], EV) \
+        .write.mode("append").option("mergeSchema", "true").saveAsTable(T)
+    hist = sp.sql(f"SELECT date_format(ts, 'yyyy-MM-dd HH:mm') ts, n_briefs, n_fallback, round(extract_acc, 3) extract_acc, round(triage_macro_f1, 3) f1, "
                   f"round(grounded, 3) grounded, round(no_leak, 3) no_leak, round(playbook, 3) playbook, mode FROM {T} ORDER BY ts DESC LIMIT 5").toPandas()
     pf = lambda ok: "PASS" if ok else "MISS"
     g, nl, pb = (rt[k] or 0 for k in v.columns)
     cm.write_evidence(c, "t10_genai_eval", "GenAI evaluation (spec §13 A5)",
-        f"ai_extract body part vs ground truth: {x.ok}/{x.n} = {acc or 0:.1%} ({x.extracted} extracted) -> {pf((acc or 0) >= .85)} (>= 85%)\n"
-        f"ai_classify triage: {len(tri)} notes, macro-F1 {f1:.3f} (reported)\n\n{cmx.to_markdown()}\n\n"
-        f"Briefs (prompt_version {PV}): {len(b)} briefs (target 50, R30); response = headline + why\n"
-        f"- brief_grounded {g:.1%} -> {pf(g >= .9)} (>= 90%)\n- no_medical_leak {nl:.1%} -> {pf(nl == 1)} (= 100%; 6-word note windows; "
+        f"ai_extract body part vs ground truth: {x.ok}/{x.n} = {acc or 0:.1%} (n = {x.n} club IL injuries, {x.extracted} extracted; "
+        f"missing = wrong) -> {pf((acc or 0) >= .85)} (>= 85%)\n"
+        f"ai_classify triage: n = {len(tri)} labelled notes, {scored} triaged (missing = wrong), macro-F1 {f1:.3f} (reported)\n\n"
+        f"{cmx.to_markdown()}\n\n"
+        f"Briefs (prompt_version {PV}): {len(b)} briefs (target 50, R30), {nfb} fallback; response = headline + why; "
+        "fallback (template) briefs count as failures for grounded and playbook\n"
+        f"- brief_grounded {g:.1%} -> {pf(g >= .9)} (>= 90%)\n- no_medical_leak {nl:.1%} -> {pf(nl == 1) if readable else 'MISS (vacuous)'} (= 100%; 6-word note windows; "
         f"notes readable by job identity: {'yes' if readable else 'NO - check vacuous'})\n- action_in_playbook {pb:.1%} -> {pf(pb == 1)} (= 100%)\n"
         f"- LLM judge coach_tone: {'off (enable with --judge=1)' if not judge else jm}\n\n"
         f"MLflow: experiment {EXP}, run {run_id}, tag prompt_version={PV}, mode {mode}\nMLflow scorer means: {agree}\n\n"

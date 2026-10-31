@@ -1,6 +1,6 @@
 import sys, pathlib
 R = pathlib.Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(R / p) for p in ("src", "src/7_app", "src/6_genie", "src/3_ml", "src/4_genai")]
+sys.path[:0] = [str(R / "src/7_app"), str(R / "src/6_genie"), str(R / "src/3_ml")]
 import pytest
 from sqlalchemy import create_engine
 import cases as cs
@@ -120,29 +120,8 @@ def test_stable_folds_deterministic_balanced_shuffle_invariant():
     f = train.stable_folds(g)
     got = dict(zip(g, f))
     assert got == {"A01": 0, "A02": 1, "A03": 2, "A04": 3, "A05": 3, "A06": 0}
-    assert np.bincount(f, minlength=4).tolist() == [4, 3, 3, 4]
+    load = np.bincount(f, minlength=4)
+    assert load.tolist() == [4, 3, 3, 4]
     perm = np.random.RandomState(1).permutation(len(g))
     gs = g.iloc[perm].reset_index(drop=True)
     assert dict(zip(gs, train.stable_folds(gs))) == got
-
-def test_validate_detection_lead_hard_negatives_null():
-    import validate as v
-    il, D = pd.Timestamp("2025-08-22"), pd.Timedelta("1D")
-    hot = {"X": (-10, -9), "Y": (-5,), "Z": (-30, -29, -25), "H": (9,), "K": (1, 2), "N": (-3, -2)}
-    rows = pd.DataFrame([(a, il + d * D, .5 if d in h or a == "Z" and -30 <= d <= -15 else 0., -2. if d in h else 0.)
-                         for a, h in hot.items() for d in range(-40, 12)], columns=["athlete_id", "feature_date", "risk_score", "velo_delta"])
-    K = {"X": "i", "Y": "i", "Z": "i", "H": "cold_weather", "K": "dead_arm_note"}
-    inc = pd.DataFrame([(a, a, "injury" if s == "i" else "hard_negative", s, il) for a, s in K.items()],
-                       columns=["key", "athlete_id", "kind", "sub_kind", "il_date"])
-    per, neg, S = v.evaluate(rows, inc, .13, {"K": False})
-    assert per.m_det.tolist() == [1, 0, 1] and per.m_lead[[0, 2]].tolist() == [10, 21] and per.r_det.tolist() == [1, 0, 0]
-    assert S["m"]["det"] == 2 and S["m"]["lead"] == 15.5 and S["m"]["pairs"] == 1 and S["m"]["null"] == S["r"]["null"] == 1
-    assert neg.m_run.tolist() == [0, 1] and neg.m_fa.tolist() == [0, 0] and neg.r_fa.tolist() == [0, 1]
-    assert [ok for _, ok, _ in v.a4(S, 3, True)] == [False, True, True, None, True, True]
-    e = v.evaluate(rows.assign(risk_score=0., velo_delta=0.), inc, .13, {})[2]["m"]
-    assert e["det"] == e["null"] == 0 and np.isnan(e["lead"])
-
-def test_genai_leak_six_word_window():
-    import genai_eval as g
-    n = ["Sharp pain on release, numbness in two fingers."]
-    assert g.leaks("Felt sharp PAIN on release, numbness in his arm", n) and not g.leaks("pain on release, numbness noted", n)

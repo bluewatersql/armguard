@@ -4,6 +4,7 @@ import pandas as pd
 FEATURES = ["velo_delta", "spin_delta", "rel_z_delta", "ext_delta", "acwr", "pitches_7d", "days_since_app",
     "soreness_3d", "min_temp_7d", "role_sp", "appearances_30d"]
 END, D = "2025-06-30", pd.Timedelta("1D")
+PARAMS = dict(max_depth=3, max_iter=100, min_samples_leaf=50, class_weight="balanced", random_state=0)
 def load_rows(sp, c):
     d = sp.table(c.fq("armguard", "gold_pitcher_daily_features")).filter(
         "NOT on_il AND n_prior_apps >= 5 AND days_since_app <= 30").toPandas()
@@ -38,7 +39,7 @@ def main(cm):
     d = load_rows(sp, c).query(f"feature_date <= '{END}'")
     il = sp.sql(f"SELECT athlete_id, TIMESTAMP(event_date) il_date FROM {c.fq('armguard', 'silver_il_events')} "
         f"WHERE action = 'placed' AND event_date <= '{END}'").toPandas()
-    m, X, y = se.HistGradientBoostingClassifier(max_depth=3, max_iter=100, min_samples_leaf=50, class_weight="balanced", random_state=0), d[FEATURES], d.label
+    m, X, y = se.HistGradientBoostingClassifier(**PARAMS), d[FEATURES], d.label
     oof = ms.cross_val_predict(m, X, y, cv=ms.PredefinedSplit(stable_folds(d.athlete_id)), method="predict_proba")[:, 1]
     t, rc, fa = min(((t, *ev(d, oof >= t, il)) for t in [i / 100 for i in range(5, 96)]), key=lambda s: (max(s[2], 3), -s[1] * (s[2] <= 3)))
     el = round(0.6 * t, 3)
