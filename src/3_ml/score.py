@@ -3,12 +3,12 @@ import os, sys
 import pandas as pd
 
 SEV_SQL = "array('none', 'fatigue', 'soreness', 'red_flag')"  # least -> most severe
-LABELS_VERSION = "v2"  # bump on any LABELS change: t6 drops and re-classifies note_triage rows of other versions
-LABELS = ('{"none":"Routine note, no arm concern","fatigue":"Tiredness, heavy or dead arm, slow recovery; no pain",'
-          '"soreness":"Mild or dull soreness or tightness; still throwing","red_flag":"Sharp or acute pain, pain on release, '
-          'numbness or tingling, grip loss, shut down from throwing, or imaging/physician referral"}')
-LABELS_V1 = ('{"none":"Routine, no concern","fatigue":"Tiredness, heavy arm, slow recovery","soreness":"Localized soreness or tightness",'
-             '"red_flag":"Pain on release, numbness, grip loss, imaging advised"}')  # reference only
+LABELS_VERSION = "v1"  # bump on any LABELS change: t6 drops and re-classifies note_triage rows of other versions
+LABELS = ('{"none":"Routine, no concern","fatigue":"Tiredness, heavy arm, slow recovery","soreness":"Localized soreness or tightness",'
+          '"red_flag":"Pain on release, numbness, grip loss, imaging advised"}')
+# v2 (not shipped: triage macro-F1 0.878 < v1 0.891 on fevm; soreness -> none): {"none":"Routine note, no arm concern",
+# "fatigue":"Tiredness, heavy or dead arm, slow recovery; no pain","soreness":"Mild or dull soreness or tightness; still throwing",
+# "red_flag":"Sharp or acute pain, pain on release, numbness or tingling, grip loss, shut down from throwing, or imaging/physician referral"}
 Z = ["velo_delta", "soreness_3d", "acwr", "spin_delta", "pitches_7d"]
 DDL = ("athlete_id STRING NOT NULL, display_name STRING, as_of_date DATE, risk_score DOUBLE, tier STRING, note_flag STRING, priority STRING, "
        "top_drivers STRING, baseline_flag BOOLEAN, velo_delta DOUBLE, pitches_7d DOUBLE, acwr DOUBLE, headline STRING, recommended_action STRING, "
