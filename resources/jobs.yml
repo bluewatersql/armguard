@@ -59,6 +59,7 @@ resources:
             parameters: ["--catalog={{job.parameters.catalog}}", "--as_of_date={{job.parameters.as_of_date}}"]
         - task_key: t7_genai
           depends_on: [{ task_key: t6_score }]
+          timeout_seconds: 1800
           environment_key: default
           spark_python_task:
             python_file: ../src/4_genai/enrich.py
@@ -86,6 +87,7 @@ resources:
             parameters: ["--catalog={{job.parameters.catalog}}", "--force={{job.parameters.force}}"]
         - task_key: t10_genai_eval
           depends_on: [{ task_key: t9_genie }]
+          timeout_seconds: 1800
           environment_key: default
           spark_python_task:
             python_file: ../src/4_genai/genai_eval.py

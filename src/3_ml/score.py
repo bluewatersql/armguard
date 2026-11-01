@@ -3,9 +3,11 @@ import os, sys
 import pandas as pd
 
 SEV_SQL = "array('none', 'fatigue', 'soreness', 'red_flag')"  # least -> most severe
-LABELS_VERSION = "v1"  # bump on any LABELS change: t6 drops and re-classifies note_triage rows of other versions
+LABELS_VERSION = "v3"  # bump on any LABELS change: t6 drops and re-classifies note_triage rows of other versions
 LABELS = ('{"none":"Routine, no concern","fatigue":"Tiredness, heavy arm, slow recovery","soreness":"Localized soreness or tightness",'
-          '"red_flag":"Pain on release, numbness, grip loss, imaging advised"}')
+          '"red_flag":"Sharp or acute pain, pain on release, numbness or tingling, grip loss, shut down from throwing, or imaging/physician referral"}')
+# v3 = v1 with v2's red_flag only. Pre-registered dev/test protocol (2 draws each, 939 notes): DEV macro-F1 v3 0.970 vs v1 0.903;
+# TEST 0.928 vs 0.917, TEST red_flag recall 0.70 vs 0.57. v1 red_flag was "Pain on release, numbness, grip loss, imaging advised".
 # v2 (not shipped: triage macro-F1 0.878 < v1 0.891 on fevm; soreness -> none): {"none":"Routine note, no arm concern",
 # "fatigue":"Tiredness, heavy or dead arm, slow recovery; no pain","soreness":"Mild or dull soreness or tightness; still throwing",
 # "red_flag":"Sharp or acute pain, pain on release, numbness or tingling, grip loss, shut down from throwing, or imaging/physician referral"}
