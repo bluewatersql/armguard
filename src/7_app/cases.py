@@ -12,8 +12,7 @@ now = lambda: dt.datetime.now(dt.timezone.utc)
 day = lambda d: dt.date.fromisoformat(str(d)[:10])  # str or date -> date (Postgres DATE params)
 SMOKE = "SMOKE"  # ops-tools smoke case: never in the queue or the snapshot
 _HIDE = []  # host, user, current token: redacted from printed errors
-_MASK = ((r"https?://\S+", "<url>"), (r"[\w.-]+\.databricks\.com\b", "<host>"), (r"\b\d{1,3}(?:\.\d{1,3}){3}\b", "<ip>"),
-         (r"\S+@\S+", "<principal>"))
+_MASK = ((r"https?://\S+", "<url>"), (r"[\w.-]+\.databricks\.com\b", "<host>"), (r"\b\d{1,3}(?:\.\d{1,3}){3}\b", "<ip>"), (r"\S+@\S+", "<principal>"))
 
 def safe(e):
     s = e if isinstance(e, str) else (str(e).splitlines() or [type(e).__name__])[0][:200]
@@ -36,7 +35,7 @@ class Token:
             return self.tok
 
 def password_hook(tok):
-    """SQLAlchemy do_connect listener: every new DB connection gets a fresh-enough token."""
+    """SQLAlchemy do_connect listener: each new connection gets a fresh-enough token."""
     return lambda dialect, rec, cargs, cparams: cparams.__setitem__("password", tok())
 
 def connect(w, branch, db="databricks_postgres"):
@@ -60,19 +59,22 @@ def ddl(s="ops"):
     pk, ts = ("BIGSERIAL PRIMARY KEY", "TIMESTAMPTZ") if s else ("INTEGER PRIMARY KEY AUTOINCREMENT", "TIMESTAMP")
     return ([f"CREATE SCHEMA IF NOT EXISTS {s}"] if s else []) + [
         f"""CREATE TABLE IF NOT EXISTS {T(s,'cases')} (case_id {pk}, athlete_id TEXT NOT NULL, opened_for DATE NOT NULL,
-        priority TEXT NOT NULL, risk_score DOUBLE PRECISION, status TEXT NOT NULL DEFAULT 'open' CHECK (status IN
-        ('open','acknowledged','action_set','referred','cleared','placed_il')), assigned_to TEXT, action TEXT,
-        pitch_limit INTEGER, created_at {ts} NOT NULL, updated_at {ts} NOT NULL, UNIQUE (athlete_id, opened_for))""",
+        priority TEXT NOT NULL, risk_score DOUBLE PRECISION, status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ({",".join(map(repr, STATUSES))})),
+        assigned_to TEXT, action TEXT, pitch_limit INTEGER, created_at {ts} NOT NULL, updated_at {ts} NOT NULL, UNIQUE (athlete_id, opened_for))""",
         f"""CREATE TABLE IF NOT EXISTS {T(s,'case_events')} (event_id {pk}, case_id BIGINT NOT NULL REFERENCES
         {T(s,'cases')}(case_id), actor TEXT NOT NULL, from_status TEXT, to_status TEXT NOT NULL, note TEXT, ts {ts} NOT NULL)"""]
 
 def open_cases(c, rows, d, schema=None):
-    n = 0
+    """Insert new cases; refresh priority/risk_score of existing open ones. -> n inserted."""
+    n, k = 0, T(schema, "cases")
     for r in rows:
         s = r.get("risk_score")
-        n += c.execute(text(f"""INSERT INTO {T(schema,'cases')} (athlete_id, opened_for, priority, risk_score, status, created_at,
-            updated_at) VALUES (:a,:d,:p,:s,'open',:n,:n) ON CONFLICT (athlete_id, opened_for) DO NOTHING"""),
-            {"a": r["athlete_id"], "d": day(d), "p": r["priority"], "s": None if s is None else float(s), "n": now()}).rowcount or 0
+        p = {"a": r["athlete_id"], "d": day(d), "p": r["priority"], "s": None if s is None else float(s), "n": now()}
+        if c.execute(text(f"""INSERT INTO {k} (athlete_id, opened_for, priority, risk_score, created_at, updated_at)
+            VALUES (:a,:d,:p,:s,:n,:n) ON CONFLICT (athlete_id, opened_for) DO NOTHING"""), p).rowcount:
+            n += 1
+        else:
+            c.execute(text(f"UPDATE {k} SET priority=:p, risk_score=:s WHERE athlete_id=:a AND opened_for=:d AND status='open'"), p)
     return n
 
 def queue(c, schema=None, opened_for=None):
@@ -88,40 +90,42 @@ def events(c, cid, schema=None):
     return [dict(r) for r in c.execute(text(f"SELECT * FROM {T(schema,'case_events')} WHERE case_id=:c ORDER BY event_id"), {"c": cid}).mappings()]
 
 def transition(c, cid, to, actor, expected, action=None, pitch_limit=None, note=None, schema=None):
-    row = c.execute(text(f"SELECT status, CASE WHEN updated_at=:e THEN 1 ELSE 0 END fresh FROM {T(schema,'cases')} WHERE case_id=:c"),
+    k = T(schema, "cases")
+    row = c.execute(text(f"SELECT status, CASE WHEN updated_at=:e THEN 1 ELSE 0 END fresh FROM {k} WHERE case_id=:c"),
                     {"c": cid, "e": expected}).one_or_none()  # same comparison as the UPDATE below
     if row is None:
         raise LookupError(f"case {cid} not found")
-    cur = row[0]
+    cur, stale = row[0], f"case {cid} changed since you loaded it; reload and retry"
     if not row[1]:  # staleness first: a stale caller must reload, whatever move it attempts
-        raise StaleUpdate(f"case {cid} changed since you loaded it; reload and retry")
+        raise StaleUpdate(stale)
     if to not in TRANSITIONS[cur]:
         raise IllegalTransition(f"{cur} -> {to} is not allowed")
     n = now()  # optimistic lock again in the UPDATE: closes the race after the read above
-    res = c.execute(text(f"""UPDATE {T(schema,'cases')} SET status=:s, action=coalesce(:a,action), pitch_limit=coalesce(:l,pitch_limit),
+    res = c.execute(text(f"""UPDATE {k} SET status=:s, action=coalesce(:a,action), pitch_limit=coalesce(:l,pitch_limit),
         assigned_to=:u, updated_at=:n WHERE case_id=:c AND updated_at=:e AND status=:f"""),
         {"s": to, "a": action, "l": pitch_limit, "u": actor, "n": n, "c": cid, "e": expected, "f": cur})
     if res.rowcount != 1:
-        raise StaleUpdate(f"case {cid} changed since you loaded it; reload and retry")
+        raise StaleUpdate(stale)
     c.execute(text(f"INSERT INTO {T(schema,'case_events')} (case_id, actor, from_status, to_status, note, ts) VALUES (:c,:u,:f,:t,:o,:n)"),
               {"c": cid, "u": actor, "f": cur, "t": to, "o": note, "n": n})
     print(f"CASE_UPDATE case_id={cid} from={cur} to={to} action={action}")
-    return dict(c.execute(text(f"SELECT * FROM {T(schema,'cases')} WHERE case_id=:c"), {"c": cid}).mappings().one())
+    return dict(c.execute(text(f"SELECT * FROM {k} WHERE case_id=:c"), {"c": cid}).mappings().one())
 
-def _ids(c, where, p, schema):
-    return [r[0] for r in c.execute(text(f"SELECT case_id FROM {T(schema,'cases')} WHERE {where}"), p)]
-
-def delete_cases(c, athlete_id, d, schema=None):
-    ids = _ids(c, "athlete_id=:a AND opened_for=:d", {"a": athlete_id, "d": day(d)}, schema)
+def _clear_events(c, where, p, schema):  # -> case_ids
+    ids = [r[0] for r in c.execute(text(f"SELECT case_id FROM {T(schema,'cases')} WHERE {where}"), p)]
     for i in ids:
         c.execute(text(f"DELETE FROM {T(schema,'case_events')} WHERE case_id=:c"), {"c": i})
+    return ids
+
+def delete_cases(c, athlete_id, d, schema=None):
+    ids = _clear_events(c, "athlete_id=:a AND opened_for=:d", {"a": athlete_id, "d": day(d)}, schema)
+    for i in ids:
         c.execute(text(f"DELETE FROM {T(schema,'cases')} WHERE case_id=:c"), {"c": i})
     return len(ids)
 
 def reset_cases(c, d, schema=None):
-    ids = _ids(c, "opened_for=:d AND status<>'open'", {"d": day(d)}, schema)
+    ids = _clear_events(c, "opened_for=:d AND status<>'open'", {"d": day(d)}, schema)
     for i in ids:
-        c.execute(text(f"DELETE FROM {T(schema,'case_events')} WHERE case_id=:c"), {"c": i})
         c.execute(text(f"UPDATE {T(schema,'cases')} SET status='open', action=NULL, pitch_limit=NULL, assigned_to=NULL, updated_at=:n "
                        "WHERE case_id=:c"), {"n": now(), "c": i})
     return len(ids)

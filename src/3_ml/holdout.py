@@ -82,8 +82,9 @@ def cell(v):
     return f"{v:%Y-%m-%d}" if isinstance(v, pd.Timestamp) else f"{v:g}" if isinstance(v, float) else str(v)
 
 
-def config_hash(features, params, high, elevated, seed, version):
-    """Frozen-configuration id (not the model version): features, hyperparameters, thresholds, simulator seed/version."""
+def config_hash(features, params, high, elevated, seed, version, labels):
+    """Frozen-configuration id (not the model version): features, hyperparameters, thresholds, simulator seed/version and the
+    triage labels (version + text; triage feeds the dead_arm P1 false-alarm and hero checks)."""
     cfg = {"features": list(features), "params": params, "high": round(float(high), 6), "elevated": round(float(elevated), 6),
-           "seed": int(seed), "version": str(version)}
+           "seed": int(seed), "version": str(version), "labels": [str(x) for x in labels]}
     return hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:16]

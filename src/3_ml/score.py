@@ -3,8 +3,12 @@ import os, sys
 import pandas as pd
 
 SEV_SQL = "array('none', 'fatigue', 'soreness', 'red_flag')"  # least -> most severe
-LABELS = ('{"none":"Routine, no concern","fatigue":"Tiredness, heavy arm, slow recovery","soreness":"Localized soreness or tightness",'
-          '"red_flag":"Pain on release, numbness, grip loss, imaging advised"}')
+LABELS_VERSION = "v2"  # bump on any LABELS change: t6 drops and re-classifies note_triage rows of other versions
+LABELS = ('{"none":"Routine note, no arm concern","fatigue":"Tiredness, heavy or dead arm, slow recovery; no pain",'
+          '"soreness":"Mild or dull soreness or tightness; still throwing","red_flag":"Sharp or acute pain, pain on release, '
+          'numbness or tingling, grip loss, shut down from throwing, or imaging/physician referral"}')
+LABELS_V1 = ('{"none":"Routine, no concern","fatigue":"Tiredness, heavy arm, slow recovery","soreness":"Localized soreness or tightness",'
+             '"red_flag":"Pain on release, numbness, grip loss, imaging advised"}')  # reference only
 Z = ["velo_delta", "soreness_3d", "acwr", "spin_delta", "pitches_7d"]
 DDL = ("athlete_id STRING NOT NULL, display_name STRING, as_of_date DATE, risk_score DOUBLE, tier STRING, note_flag STRING, priority STRING, "
        "top_drivers STRING, baseline_flag BOOLEAN, velo_delta DOUBLE, pitches_7d DOUBLE, acwr DOUBLE, headline STRING, recommended_action STRING, "
@@ -29,15 +33,28 @@ def top_drivers(h, a):
 
 
 def triage(sp, c):
-    """Incremental: classify only notes not yet in note_triage; failed calls stay out and are retried next run."""
-    o = c.fq("armguard_ops", "note_triage")
-    sp.sql(f"CREATE TABLE IF NOT EXISTS {o} (note_id STRING, athlete_id STRING, note_ts TIMESTAMP, note_flag STRING, confidence DOUBLE)")
-    sp.sql(f"""INSERT INTO {o}
-      SELECT note_id, athlete_id, note_ts, c:response[0]:value::string, c:response[0]:confidence_score::double FROM (
+    """Incremental and version-aware: rows of another LABELS_VERSION (or NULL = pre-versioning) are deleted, then every note
+    not in note_triage is classified; failed calls stay out and are retried next run. -> (table, cache summary)."""
+    o, v = c.fq("armguard_ops", "note_triage"), {"v": LABELS_VERSION}
+    sp.sql(f"CREATE TABLE IF NOT EXISTS {o} (note_id STRING, athlete_id STRING, note_ts TIMESTAMP, note_flag STRING, confidence DOUBLE, "
+           "labels_version STRING)")
+    if "labels_version" not in sp.table(o).columns:
+        sp.sql(f"ALTER TABLE {o} ADD COLUMNS (labels_version STRING)")
+    before = dict(sp.sql(f"SELECT coalesce(labels_version, 'v1 (unversioned)'), count(*) FROM {o} GROUP BY 1").collect())
+    stale = {k: n for k, n in before.items() if k != LABELS_VERSION}
+    if stale:
+        sp.sql(f"DELETE FROM {o} WHERE labels_version IS NULL OR labels_version <> :v", args=v)
+    sp.sql(f"""INSERT INTO {o} (note_id, athlete_id, note_ts, note_flag, confidence, labels_version)
+      SELECT note_id, athlete_id, note_ts, c:response[0]:value::string, c:response[0]:confidence_score::double, :v FROM (
         SELECT n.*, ai_classify(n.note_text, :labels, MAP('version','2.1','enableConfidenceScores','true')) c
         FROM {c.fq('armguard', 'silver_trainer_notes')} n LEFT ANTI JOIN {o} t USING (note_id))
-      WHERE c:response[0]:value IS NOT NULL""", args={"labels": LABELS})
-    return o
+      WHERE c:response[0]:value IS NOT NULL""", args={**v, "labels": LABELS})
+    now = sp.sql(f"SELECT count(*) FROM {o} WHERE labels_version = :v", args=v).first()[0]
+    notes = sp.table(c.fq("armguard", "silver_trainer_notes")).count()
+    new = now - before.get(LABELS_VERSION, 0)
+    msg = (f"triage cache: before {before}; re-classified {sum(stale.values())} notes (labels {', '.join(sorted(stale))} -> "
+           f"{LABELS_VERSION}); " if stale else f"triage cache: labels {LABELS_VERSION}, no stale rows; ")
+    return o, msg + f"{new} classified this run; {now}/{notes} notes triaged ({notes - now} failed, retried next run)"
 
 
 def score_date(sp, c, as_of):
@@ -65,7 +82,7 @@ def score_date(sp, c, as_of):
 def main(cm):
     from pyspark.sql import SparkSession
     c, sp = cm.Cfg.from_args(sys.argv[1:]), SparkSession.builder.getOrCreate()
-    o, T = triage(sp, c), c.fq("armguard_ops", "pitcher_risk_current")
+    (o, cache), T = triage(sp, c), c.fq("armguard_ops", "pitcher_risk_current")
     r = score_date(sp, c, c.as_of_date)
     if r.empty:  # never MERGE an empty source: NOT MATCHED BY SOURCE would empty the queue
         raise SystemExit(f"no eligible pitchers on {c.as_of_date}")
@@ -86,7 +103,7 @@ def main(cm):
         f"{len(r)} pitchers scored with @champion v{r.model_version.iloc[0]}\n\nTier x priority:\n"
         f"{pd.crosstab(r.tier, r.priority.fillna('none')).to_markdown()}\n\n"
         f"note_flag (most severe, last 7 days): {r.note_flag.fillna('no note').value_counts().to_dict()}\n"
-        f"note_triage, all notes: {dict(sp.table(o).groupBy('note_flag').count().collect())}\n\n"
+        f"note_triage, all notes: {dict(sp.table(o).groupBy('note_flag').count().collect())}\n{cache}\n\n"
         f"Top queue:\n{md(q.head(8))}\n\nHero {cm.HERO} must be P1: {'PASS' if hero.priority.eq('P1').any() else 'MISS'}\n{md(hero)}")
 
 

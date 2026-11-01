@@ -18,7 +18,7 @@ def main(cm):
     force = "--force=1" in sys.argv[1:]
     t = sp.table(c.fq("armguard_ops", "model_thresholds")).first()
     g = sp.table(c.fq("armguard_gt", "generator_manifest")).first()
-    h = ho.config_hash(tr.FEATURES, tr.PARAMS, t.high, t.elevated, g.seed, g.version)
+    h = ho.config_hash(tr.FEATURES, tr.PARAMS, t.high, t.elevated, g.seed, g.version, (sc.LABELS_VERSION, sc.LABELS))
     T = c.fq("armguard_ops", "eval_validation")
     sp.sql(f"CREATE TABLE IF NOT EXISTS {T} ({EV})")
     if "config_hash" not in sp.table(T).columns:
@@ -59,7 +59,8 @@ def main(cm):
     hl = "; ".join(f"{x.tier} {x.priority}, risk {x.risk_score:.3f}, note {x.note_flag}" for x in hero.itertuples()) or "not scored"
     nr = lambda k, p="null": f"{S[k][p]:.1%} ({S[k][p + '_det']}/{S[k]['pairs' if p == 'null' else p + '_pairs']})"
     cm.write_evidence(c, "t10_validation", f"Holdout validation #{n} (spec §13 A4)",
-        f"@champion v{t.model_version}, model alert risk_score >= HIGH {t.high}; staff rule velo_delta <= -1.5; config {h}\n"
+        f"@champion v{t.model_version}, model alert risk_score >= HIGH {t.high}; staff rule velo_delta <= -1.5; config {h} "
+        f"(triage labels {sc.LABELS_VERSION})\n"
         f"{len(rows)} holdout pitcher-days scored ({HSTART}..), training filters; detection = alert run of >= 2 consecutive days "
         "within [IL-21, IL-1] (days inside the window only); lead = IL - first in-window alert day (max 21)\n\n"
         f"{show(per, ['key', 'athlete_id', 'il_date', 'm_det', 'm_lead', 'r_det', 'r_lead'])}\n\n"

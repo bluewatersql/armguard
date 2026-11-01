@@ -5,7 +5,7 @@ import pandas as pd
 LABELS, EXP, PV = ["none", "fatigue", "soreness", "red_flag"], "/Shared/armguard-eval", "v1"
 EV = ("ts TIMESTAMP, prompt_version STRING, n_briefs INT, extract_n INT, extract_correct INT, extract_acc DOUBLE, triage_n INT, "
       "triage_macro_f1 DOUBLE, grounded DOUBLE, no_leak DOUBLE, playbook DOUBLE, judge DOUBLE, notes_readable BOOLEAN, mode STRING, "
-      "mlflow_run_id STRING, n_fallback INT, extract_found INT, triage_scored INT")
+      "mlflow_run_id STRING, n_fallback INT, extract_found INT, triage_scored INT, labels_version STRING")
 _W = re.compile(r"[a-z0-9']+")
 
 
@@ -88,6 +88,7 @@ def main(cm):
     cmx = pd.DataFrame(confusion_matrix(tri.y, tri.p, labels=LABELS + ["missing"]), index=[f"true {k}" for k in LABELS + ["missing"]],
                        columns=LABELS + ["missing"]).iloc[:len(LABELS)]
     scored = int((tri.p != "missing").sum())
+    lv = sp.sql(f"SELECT array_join(collect_set(labels_version), ',') FROM {O('note_triage')}").first()[0]
     f1 = float(f1_score(tri.y, tri.p, labels=LABELS, average="macro", zero_division=0))
     b = sp.sql(f"SELECT athlete_id, as_of_date, headline, why, recommended_action, fallback, facts_json FROM {O('pitcher_briefs')} "
                "WHERE prompt_version = :v ORDER BY as_of_date, athlete_id", args={"v": PV}).toPandas()
@@ -103,17 +104,22 @@ def main(cm):
     nfb = int(b.fallback.sum())
     run_id, mode, jm, agree = mlflow_eval(cm, c, data, notes, {**rt, "extract_acc": acc, "triage_macro_f1": f1}, judge)
     T = O("eval_genai")
+    sp.sql(f"CREATE TABLE IF NOT EXISTS {T} ({EV})")
+    if "labels_version" not in sp.table(T).columns:
+        sp.sql(f"ALTER TABLE {T} ADD COLUMNS (labels_version STRING)")
     sp.createDataFrame([(dt.datetime.now(dt.timezone.utc), PV, len(b), x.n, x.ok, acc, len(tri), f1, rt["brief_grounded"],
-                         rt["no_medical_leak"], rt["action_in_playbook"], jm, readable, mode, run_id, nfb, x.extracted, scored)], EV) \
+                         rt["no_medical_leak"], rt["action_in_playbook"], jm, readable, mode, run_id, nfb, x.extracted, scored, lv)], EV) \
         .write.mode("append").option("mergeSchema", "true").saveAsTable(T)
-    hist = sp.sql(f"SELECT date_format(ts, 'yyyy-MM-dd HH:mm') ts, n_briefs, n_fallback, round(extract_acc, 3) extract_acc, round(triage_macro_f1, 3) f1, "
-                  f"round(grounded, 3) grounded, round(no_leak, 3) no_leak, round(playbook, 3) playbook, mode FROM {T} ORDER BY ts DESC LIMIT 5").toPandas()
+    lab = "coalesce(labels_version, 'v1 (null)') labels"
+    hist = sp.sql(f"SELECT date_format(ts, 'yyyy-MM-dd HH:mm') ts, {lab}, n_briefs, n_fallback, extract_acc, triage_macro_f1 f1, grounded, "
+                  f"no_leak, playbook, mode FROM {T} ORDER BY ts DESC LIMIT 5").toPandas()
+    byv = sp.sql(f"SELECT {lab}, count(*) runs, max_by(triage_macro_f1, ts) latest_f1 FROM {T} GROUP BY 1 ORDER BY 1").toPandas()
     pf = lambda ok: "PASS" if ok else "MISS"
     g, nl, pb = (rt[k] or 0 for k in v.columns)
     cm.write_evidence(c, "t10_genai_eval", "GenAI evaluation (spec §13 A5)",
         f"ai_extract body part vs ground truth: {x.ok}/{x.n} = {acc or 0:.1%} (n = {x.n} club IL injuries, {x.extracted} extracted; "
         f"missing = wrong) -> {pf((acc or 0) >= .85)} (>= 85%)\n"
-        f"ai_classify triage: n = {len(tri)} labelled notes, {scored} triaged (missing = wrong), macro-F1 {f1:.3f} (reported)\n\n"
+        f"ai_classify triage (labels {lv}): n = {len(tri)} labelled notes, {scored} triaged (missing = wrong), macro-F1 {f1:.3f} (reported)\n\n"
         f"{cmx.to_markdown()}\n\n"
         f"Briefs (prompt_version {PV}): {len(b)} briefs (target 50, R30), {nfb} fallback; response = headline + why; "
         "fallback (template) briefs count as failures for grounded and playbook\n"
@@ -121,7 +127,8 @@ def main(cm):
         f"notes readable by job identity: {'yes' if readable else 'NO - check vacuous'})\n- action_in_playbook {pb:.1%} -> {pf(pb == 1)} (= 100%)\n"
         f"- LLM judge coach_tone: {'off (enable with --judge=1)' if not judge else jm}\n\n"
         f"MLflow: experiment {EXP}, run {run_id}, tag prompt_version={PV}, mode {mode}\nMLflow scorer means: {agree}\n\n"
-        f"Eval history (last 5):\n{hist.to_markdown(index=False)}", limit=5000)
+        f"Triage macro-F1 by labels version:\n{byv.to_markdown(index=False, floatfmt='.3f')}\n\n"
+        f"Eval history (last 5):\n{hist.to_markdown(index=False, floatfmt='.3f')}", limit=5000)
 
 
 if __name__ == "__main__":
