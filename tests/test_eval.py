@@ -88,3 +88,24 @@ def test_open_cases_refreshes_open_cases_only_and_counts_inserts():
         assert b == b0  # non-open case untouched
         assert cs.open_cases(cx, rows + [{"athlete_id": "A07", "priority": "P3", "risk_score": None}], D) == 1
         assert [r["priority"] for r in cs.queue(cx)] == ["P2", "P2", "P3"]
+
+
+def test_scrub_removes_identifiers():
+    sys.path.insert(0, str(R / "tools"))
+    import publish_evidence as pe
+    email, host, ws, tok, cat = "jane" + "@example.com", "example-ws" + ".cloud.databricks.com", "1234567890123456", "dapi" + "0" * 32, "demo_cat_x"
+    app = "armguard-" + ws + ".aws.databricksapps" + ".com"
+    s = f"user {email} at https://{host}/x and {host} ws {ws} tok {tok} table {cat}.armguard.t run 987654 app https://{app}/q {app}"
+    out = pe.scrub(s, literals={ws: "<workspace-id>", cat: "<catalog>"})
+    for bad in (email, host, ws, tok, cat, app, "databricksapps"):
+        assert bad not in out
+    assert "run 987654" in out and "<catalog>.armguard.t" in out
+
+
+def test_gate_read_order_prefix_cut():
+    sys.path.insert(0, str(R / "tools"))
+    import publish_evidence as pe
+    sizes = {"README.md": 40, "EVIDENCE.md": 30, "DESIGN.md": 20, "a.py": 15, "b.py": 5}
+    take, cut = pe.prefix(["README.md", "EVIDENCE.md", "DESIGN.md", "a.py", "b.py"], sizes, files=4, chars=100)
+    assert take == ["README.md", "EVIDENCE.md", "DESIGN.md"] and cut == "a.py"
+    assert pe.prefix(["README.md", "b.py"], sizes, files=4, chars=100) == (["README.md", "b.py"], None)
