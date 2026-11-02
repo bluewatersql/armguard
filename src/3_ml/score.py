@@ -34,6 +34,12 @@ def top_drivers(h, a):
                      index=r.index, dtype=object)
 
 
+def unmasked_or_die(prefixes):
+    """Abort t6 if any note to classify is masked, so a mask string is never classified and cached as a label."""
+    if n := sum(str(p).startswith("[REDACTED") for p in prefixes):
+        raise SystemExit(f"{n} trainer notes to classify are masked: run t6 as a principal with role 'medical' in staff_roles")
+
+
 def triage(sp, c):
     """Incremental and version-aware: rows of another LABELS_VERSION (or NULL = pre-versioning) are deleted, then every note
     not in note_triage is classified; failed calls stay out and are retried next run. -> (table, cache summary)."""
@@ -46,10 +52,11 @@ def triage(sp, c):
     stale = {k: n for k, n in before.items() if k != LABELS_VERSION}
     if stale:
         sp.sql(f"DELETE FROM {o} WHERE labels_version IS NULL OR labels_version <> :v", args=v)
+    todo = f"{c.fq('armguard', 'silver_trainer_notes')} n LEFT ANTI JOIN {o} t USING (note_id)"
+    unmasked_or_die(r[0] for r in sp.sql(f"SELECT left(n.note_text, 9) FROM {todo}").collect())  # prefix only
     sp.sql(f"""INSERT INTO {o} (note_id, athlete_id, note_ts, note_flag, confidence, labels_version)
       SELECT note_id, athlete_id, note_ts, c:response[0]:value::string, c:response[0]:confidence_score::double, :v FROM (
-        SELECT n.*, ai_classify(n.note_text, :labels, MAP('version','2.1','enableConfidenceScores','true')) c
-        FROM {c.fq('armguard', 'silver_trainer_notes')} n LEFT ANTI JOIN {o} t USING (note_id))
+        SELECT n.*, ai_classify(n.note_text, :labels, MAP('version','2.1','enableConfidenceScores','true')) c FROM {todo})
       WHERE c:response[0]:value IS NOT NULL""", args={**v, "labels": LABELS})
     now = sp.sql(f"SELECT count(*) FROM {o} WHERE labels_version = :v", args=v).first()[0]
     notes = sp.table(c.fq("armguard", "silver_trainer_notes")).count()

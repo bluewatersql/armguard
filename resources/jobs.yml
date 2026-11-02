@@ -66,6 +66,8 @@ resources:
             parameters: ["--catalog={{job.parameters.catalog}}", "--as_of_date={{job.parameters.as_of_date}}", "--llm_endpoint={{job.parameters.llm_endpoint}}"]
         - task_key: t8_lakebase
           depends_on: [{ task_key: t7_genai }]
+          max_retries: 1  # psycopg SIGABRT on a cold first attempt
+          min_retry_interval_millis: 10000
           environment_key: default
           spark_python_task:
             python_file: ../src/5_lakebase/lakebase.py
@@ -105,6 +107,8 @@ resources:
             dependencies: ["pandas", "databricks-sdk>=0.158", "psycopg[binary]>=3.2", "sqlalchemy>=2.0", "tabulate"]
       tasks:
         - task_key: ops
+          max_retries: 1
+          min_retry_interval_millis: 10000
           environment_key: default
           spark_python_task:
             python_file: ../src/5_lakebase/lakebase.py

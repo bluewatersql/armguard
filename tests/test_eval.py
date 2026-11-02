@@ -66,8 +66,31 @@ def test_genai_leak_window_and_fallback_fails_a5():
     assert g.leaks("Felt sharp PAIN on release, numbness in his arm", n) and not g.leaks("pain on release, numbness noted", n)
     rec = lambda fb: {"inputs": {"facts": json.dumps({"velo_delta": -1.8}), "athlete_id": "A"},
                       "outputs": {"response": "Down 1.8 mph"}, "expectations": {"action": "monitor", "fallback": fb}}
-    assert g.checks(cm, rec(False), {"A": n}) == {"brief_grounded": True, "no_medical_leak": True, "action_in_playbook": True}
-    assert g.checks(cm, rec(True), {"A": n}) == {"brief_grounded": False, "no_medical_leak": True, "action_in_playbook": False}
+    assert g.checks(cm, rec(False), n) == {"brief_grounded": True, "no_medical_leak": True, "action_in_playbook": True}
+    assert g.checks(cm, rec(True), n) == {"brief_grounded": False, "no_medical_leak": True, "action_in_playbook": False}
+
+
+def test_leak_check_uses_every_note_not_only_the_athletes_own():
+    import genai_eval as g
+    r = {"inputs": {"facts": "{}", "athlete_id": "A"}, "outputs": {"response": "B said sharp pain on release and numbness in fingers"},
+         "expectations": {"action": "monitor", "fallback": False}}
+    assert g.checks(cm, r, ["Routine bullpen.", "Sharp pain on release and numbness in fingers."])["no_medical_leak"] is False
+
+
+def test_triage_aborts_on_masked_note_text():
+    import pytest, score
+    score.unmasked_or_die(["Sharp pai", None, "Felt good"])
+    with pytest.raises(SystemExit, match="1 trainer notes"):
+        score.unmasked_or_die(["Felt good", "[REDACTED"])
+
+
+def test_genie_eval_run_failure_is_fail_soft():
+    sys.path.insert(0, str(R / "src/6_genie"))
+    import genie_ops as ops
+    from types import SimpleNamespace as N
+    G = N(genie_create_eval_run=lambda sid: N(eval_run_id="r1"), genie_get_eval_run=lambda sid, rid: N(eval_run_status="EVALUATION_FAILED"))
+    run, res, fail = ops.try_evaluate(N(genie=G), "s1", "OK app SP: CAN_RUN", "cat_x")
+    assert run is None and res == {} and fail.startswith("eval run FAILED/timeout: eval run r1") and "EVALUATION_FAILED" in fail
 
 
 def test_open_cases_refreshes_open_cases_only_and_counts_inserts():

@@ -10,4 +10,3 @@ variables:
   lakebase_db_id: { default: "none" }
 targets:
   fevm: { default: true, workspace: { profile: fevm } }
-  e2demo: { workspace: { profile: e2-demo-field-eng } }

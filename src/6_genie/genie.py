@@ -52,12 +52,18 @@ def main(cm, c):
     sid, verb = ops.upsert(w, sp, c, wh, json.dumps(sx.build_space(c.catalog, thr, bench, tables)), TITLE)
     print("genie_space_id", sid)
     g, gok = ops.grant(w, sid)
-    run, res = ops.evaluate(w, sid, g)
+    err = f"reference SQL errors: {bad}; app grant: {g}" if bad or not gok else None
+    run, res, fail = ops.try_evaluate(w, sid, g, c.catalog)
     rows = [(i, q, *res.get(sx.nid(f"bench {i}"), ("MISSING", []))) for i, q, _ in bench]
     n_ok, n_rev = sum(r[2] == "GOOD" for r in rows), sum(r[2] == "NEEDS_REVIEW" for r in rows)
     ts = dt.datetime.now(dt.timezone.utc)
-    sp.createDataFrame([(ts, METHOD, i, a == "GOOD") for i, _, a, _ in rows], "run_ts TIMESTAMP, method STRING, q_num INT, correct BOOLEAN") \
+    out = [(ts, METHOD + " FAILED", 0, None)] if fail else [(ts, METHOD, i, a == "GOOD") for i, _, a, _ in rows]  # q_num 0 = whole run
+    sp.createDataFrame(out, "run_ts TIMESTAMP, method STRING, q_num INT, correct BOOLEAN") \
         .write.mode("append").saveAsTable(c.fq("armguard_ops", "eval_genie"))
+    if fail:  # fail-soft once upserted: t10_genai_eval still runs; a failed grant or reference SQL still fails t9
+        cm.write_evidence(c, "t9_genie", f"Genie Agent '{TITLE}': eval run FAILED", f"Space {sid} ({verb}), {len(tables)} tables\n{fail}\n"
+                          f"Reference SQL errors: {bad or 'none'}\nApp grant: {g}")
+        return err
     h = sp.table(c.fq("armguard", "silver_roster")).where(F.col("athlete_id") == cm.HERO).first()
     hero = h["display_name"] if h else None
     fmt = lambda v: "; ".join(" ".join(f"{x:.2f}" if isinstance(x, float) else str(x) for x in r) for r in v) or "(none)"
@@ -70,7 +76,7 @@ def main(cm, c):
         f"| Q | question | correct | assessment |\n|---|---|---|---|\n{tab}\n\nPlanted answer sets (reference SQL via Spark; Q8 = t7 KPI):\n{plant}\n"
         f"Hero {cm.HERO} ({hero}) in Q2 and Q10: {'PASS' if hero and all((hero,) in ref.get(i, []) for i in (2, 10)) else 'MISS'}\n"
         f"Reference SQL errors: {bad or 'none'}\nApp grant: {g}", limit=6000)
-    return f"reference SQL errors: {bad}; app grant: {g}" if bad or not gok else None
+    return err
 
 
 if __name__ == "__main__":

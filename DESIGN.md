@@ -48,12 +48,12 @@ A GBM plus deterministic P1–P3 rules make every call, so alerts are reproducib
 - v2 alone failed its macro-F1 gate (0.878 < 0.891), so it was reverted.
 
 ## Genie benchmarks (frozen once written, R37)
-- R39: the league "pitcher" definition now includes `Pitcher`/`P` positions (323 → 467): a ground-truth fix, not Genie output.
+- R39: the league pitcher filter adds `Pitcher`, `pitcher`, `Relief Pitcher` to RHP/LHP (323 → 467 = RHP 257 + Pitcher 103 + LHP 68 + pitcher 38 + Relief Pitcher 1): a ground-truth fix, not Genie output.
 - R41: Q12 wording changed to "decided cases only", because an undecided case has no answer.
 - R54: Q12 is NEEDS_REVIEW; Genie's SQL differs only by the reference's `ROUND(…, 1)` and an extra `priority IS NOT NULL` filter. Left frozen: 11/12.
 
 ## Governance
-- R26: extra app-SP grants (USE `armguard_gov`, SELECT `staff_roles`) kept but unverified; revoke test blocked.
+- R26: `DESCRIBE FUNCTION EXTENDED mask_medical`: owner-defined, `READS SQL DATA`; UC SQL UDFs run with definer rights (`current_user()` is still the caller), so the app SP's SELECT on `staff_roles` is redundant. Kept, not revoked.
 - R43: the app reads notes as its service principal (no on-behalf-of), so app notes are always masked; the t4 probe shows the role contrast.
 - R46: no `GRANT EXECUTE ON MODEL`; the app never loads the model.
 
@@ -62,10 +62,14 @@ A GBM plus deterministic P1–P3 rules make every call, so alerts are reproducib
 - R30: brief-count target relaxed to ≥ 40; the live eval has 51.
 - R34: league IL KPIs freeze at first extraction (README).
 - A10 (user): the from-zero rebuild into a fresh fevm workspace after a platform reset is the reprovision proof; it did not run in `e2-demo-field-eng`.
-- Both Lakebase tasks in that rebuild (t8, smoke) aborted on attempt 0 (platform SIGABRT) and passed on the automatic retry, which we rely on. No `--teardown` yet.
+- Both Lakebase tasks in that rebuild (t8, smoke) aborted on attempt 0 (platform SIGABRT) and passed on the platform retry; both now declare `max_retries: 1` (10 s apart). No `--teardown` yet.
+
+## Final review
+- Fixed: t8 creates `case_history` empty so t4 grants it before the first Publish (the snapshot re-grants too); t6 aborts on masked notes; no-leak checks all notes (tests only: t10_genai_eval not re-run); a failed Beta Genie eval run no longer fails t9.
+- Gaps: no haiku brief fallback, invalid briefs go to the template (`enrich.py` at the cap); open cases stay open when a pitcher leaves the queue; table comments on 2 gold tables only (spec §6.6: all gold and ops).
 
 ## Size budget
-The evaluator reads up to 30 files / 90k characters, at most 9k per file. Every file is ≤ 9,000 characters (hard gate), but the repo is 33 files and about 190k characters. Many code files ran 2–3× over their per-file targets because correctness and demo reliability came first (user, R29). `tools/publish_evidence.py --gate` prints a read order: these three docs, then the core files of each layer. That prefix fits the budget; the rest is reported as past budget.
+The evaluator reads up to 30 files / 90k characters, at most 9k per file. Every file is ≤ 9,000 characters (hard gate), but the repo is 33 files and about 194k characters. Many code files ran 2–3× over their per-file targets because correctness and demo reliability came first (user, R29). `tools/publish_evidence.py --gate` prints a read order: these three docs, then the core files of each layer. That prefix fits the budget; the rest is reported as past budget.
 
 ## AI-assisted build
 Claude Code coordinated subagents: an implementer per task, an independent review of every task, fix rounds until clean. The human approved the concept, spec and plan gates and made the key decisions marked "user" here (accept A4 MISS, the single metric re-run, reproduction #3, labels v3, working demo over size caps). Hygiene: gitleaks on every commit; identifiers scrubbed.

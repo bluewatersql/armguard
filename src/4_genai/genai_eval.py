@@ -29,9 +29,10 @@ def playbook(cm, expectations):
 
 
 def checks(cm, rec, notes):
-    """The three scorer values for one eval record (a template/fallback brief fails grounded and playbook); MLflow scorers share them."""
+    """The three scorer values for one eval record (a template/fallback brief fails grounded and playbook); MLflow scorers share them.
+    notes = ALL trainer notes (spec §8: no window of any note), not only the athlete's own."""
     i, o, x = rec["inputs"], rec["outputs"], rec["expectations"]
-    return {"brief_grounded": grounded(cm, i, o, x), "no_medical_leak": not leaks(o["response"], notes.get(i["athlete_id"], ())),
+    return {"brief_grounded": grounded(cm, i, o, x), "no_medical_leak": not leaks(o["response"], notes),
             "action_in_playbook": playbook(cm, x)}
 
 
@@ -46,7 +47,7 @@ def mlflow_eval(cm, c, data, notes, rates, judge):
 
     @scorer
     def no_medical_leak(inputs, outputs):
-        return not leaks(outputs["response"], notes.get(inputs["athlete_id"], ()))
+        return not leaks(outputs["response"], notes)
 
     @scorer
     def action_in_playbook(expectations):
@@ -93,10 +94,8 @@ def main(cm):
     b = sp.sql(f"SELECT athlete_id, as_of_date, headline, why, recommended_action, fallback, facts_json FROM {O('pitcher_briefs')} "
                "WHERE prompt_version = :v ORDER BY as_of_date, athlete_id", args={"v": PV}).toPandas()
     b["fallback"] = b.fallback.fillna(True).astype(bool)  # unknown -> treated as a fallback (fails A5)
-    notes = {}
-    for a, t in sp.sql(f"SELECT athlete_id, note_text FROM {A('silver_trainer_notes')}").collect():
-        notes.setdefault(a, []).append(t or "")
-    readable = bool(notes) and not any(t.startswith("[REDACTED") for v in notes.values() for t in v)
+    notes = [t or "" for (t,) in sp.sql(f"SELECT note_text FROM {A('silver_trainer_notes')}").collect()]  # boolean checks only
+    readable = bool(notes) and not any(t.startswith("[REDACTED") for t in notes)
     data = [{"inputs": {"facts": r.facts_json, "athlete_id": r.athlete_id}, "outputs": {"response": f"{r.headline} {r.why}"},
              "expectations": {"action": r.recommended_action, "fallback": bool(r.fallback)}} for r in b.itertuples()]
     v = pd.DataFrame([checks(cm, d, notes) for d in data], columns=["brief_grounded", "no_medical_leak", "action_in_playbook"])

@@ -5,6 +5,9 @@ from dataclasses import dataclass, fields
 PLAYBOOK = ("monitor", "limit_pitches", "extra_rest", "bullpen_only", "refer_medical")
 WINDOWS = {3, 7, 10, 14, 21, 28, 30}
 HERO = "A22"  # pinned storyline pitcher (t2)
+# armguard_ops.case_history = HIST + display_name: snapshot() writes it; t8 sync() creates it empty so t4 grants and t9 attaches it
+HIST = ("athlete_id STRING, case_id BIGINT, opened_for DATE, priority STRING, risk_score DOUBLE, status STRING, action STRING, pitch_limit INT, "
+        "created_at TIMESTAMP, updated_at TIMESTAMP, n_events BIGINT, decided_at TIMESTAMP, hours_to_decision DOUBLE")
 
 @dataclass(frozen=True)
 class Cfg:

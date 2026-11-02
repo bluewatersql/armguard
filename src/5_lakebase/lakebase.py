@@ -15,7 +15,7 @@ def ensure_project(w):
     except NotFound:
         cu = {"autoscaling_limit_min_cu": 0.5, "autoscaling_limit_max_cu": 2.0}
         p = Project.from_dict({"spec": {"display_name": "ArmGuard", "pg_version": 17, "default_endpoint_settings": cu}})
-        w.postgres.create_project(project=p, project_id=PROJ).wait()  # SPIKE Q8: .wait()
+        w.postgres.create_project(project=p, project_id=PROJ).wait()
         return "created"
 
 
@@ -63,14 +63,19 @@ def sync_table(w, c):
     return f"timeout after 15 min ({st})", False
 
 
-def grant(w):
-    """-> (log, ok): WAIT if no app; with an app SP, any failed schema fails t8."""
+def app_sp(w):
+    """App SP application id (validated) or None."""
     try:
         sp = w.apps.get("armguard").service_principal_client_id
     except Exception:
-        sp = None
-    if not sp or not re.fullmatch(r"[0-9a-fA-F-]{36}", sp):
-        return "WAIT app 'armguard' not found (Task 10 re-runs t8)", True
+        return None
+    return sp if sp and re.fullmatch(r"[0-9a-fA-F-]{36}", sp) else None
+
+
+def grant(w):
+    """-> (log, ok): WAIT if no app; with an app SP, any failed schema fails t8."""
+    if not (sp := app_sp(w)):
+        return "WAIT app 'armguard' not found", True
     bad = []
     for s, gs in GRANTS.items():  # a transaction per schema; sp validated above
         try:
@@ -93,6 +98,7 @@ def sync(c, w, sp):
     total = len(tx(w, lambda cx: cs.queue(cx, "ops")))  # SMOKE excluded
     synced = tx(w, lambda cx: cx.execute(text("SELECT count(*) FROM armguard_ops.pitcher_risk_synced")).scalar_one()) if ok else "n/a"
     sp.sql(f"CREATE TABLE IF NOT EXISTS {A} (key STRING, value STRING)")
+    sp.sql(f"CREATE TABLE IF NOT EXISTS {c.fq('armguard_ops', 'case_history')} ({cm.HIST}, display_name STRING)")
     sp.sql(f"MERGE INTO {A} t USING (SELECT * FROM VALUES ('catalog', :cat), ('as_of_date', :d) AS v(key, value)) s ON t.key = s.key "
            "WHEN MATCHED THEN UPDATE SET t.value = s.value WHEN NOT MATCHED THEN INSERT *", args={"cat": c.catalog, "d": c.as_of_date})
     gold = sp.table(P).count()
@@ -107,11 +113,11 @@ def sync(c, w, sp):
 def snapshot(c, w, sp):
     import pandas as pd
     h = tx(w, lambda cx: cs.history(cx, "ops"))
-    ddl = ("case_id BIGINT, athlete_id STRING, opened_for DATE, priority STRING, risk_score DOUBLE, status STRING, action STRING, pitch_limit INT, "
-           "created_at TIMESTAMP, updated_at TIMESTAMP, n_events BIGINT, decided_at TIMESTAMP, hours_to_decision DOUBLE")
-    s = sp.createDataFrame(h[[k.split()[0] for k in ddl.split(", ")]], ddl)
+    s = sp.createDataFrame(h[[k.split()[0] for k in cm.HIST.split(", ")]], cm.HIST)
     s = s.join(sp.table(c.fq("armguard", "silver_roster")).select("athlete_id", "display_name"), "athlete_id", "left")
-    s.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(c.fq("armguard_ops", "case_history"))
+    s.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(H := c.fq("armguard_ops", "case_history"))
+    if sid := app_sp(w):  # t4 grants it too
+        sp.sql(f"GRANT SELECT ON TABLE {H} TO `{sid}`")
     med = h.hours_to_decision.median()
     cm.write_evidence(c, "t11_snapshot", "Case history snapshot (Lakebase -> Delta)",
         f"{len(h)} cases -> armguard_ops.case_history (no actor/assignee columns)\nBy status: {h.status.value_counts().to_dict()}\n"
@@ -119,8 +125,7 @@ def snapshot(c, w, sp):
 
 
 def smoke(c, w):
-    D, stale = "1900-01-01", "MISS: stale update was accepted"
-    S = cs.SMOKE
+    D, S, stale = "1900-01-01", cs.SMOKE, "MISS: stale update was accepted"
     tx(w, lambda cx: cs.delete_cases(cx, S, D, "ops"))  # leftover of an aborted run
     out = [f"opened {tx(w, lambda cx: cs.open_cases(cx, [{'athlete_id': S, 'priority': 'P1', 'risk_score': 0.99}], D, 'ops'))}"]
     try:

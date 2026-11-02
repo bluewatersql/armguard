@@ -7,13 +7,13 @@ All numbers are copied from job output in the live workspace; workspace ids and 
 |---|---|---|---|
 | A1 | Daily job, every task SUCCESS, row counts | run `128736621004166`: 12 tasks SUCCESS (t8 after a platform auto-retry), t10_validate gated off; counts §1 | PASS |
 | A2 | SDP expectations from the event log | 5 expectations; `velo_plausible` dropped 3 of 22,070 pitches; all others 0 failed | PASS |
-| A3 | Tags, mask probe, MASK_CHECK, lineage | ABAC policy (path b) probe `effective=True`; app SP sees `[REDACTED…`; 12 lineage rows | PASS |
+| A3 | Tags, mask probe, MASK_CHECK, lineage | ABAC policy (path b) probe `effective=True`; app SP sees `[REDACTED…`; lineage rows present (t4 prints the newest 12 from system tables) | PASS |
 | A4 | Holdout backtest (evaluation #4) | recall 7/8 PASS · median lead 18 d PASS · hard-negative false alarms 2/4 **MISS** · model beats rule **MISS** · null rate 47.8% vs 2.2% (reported) · hero P1 PASS | **MISS** |
 | A5 | GenAI quality | body part 16/16 = 100%; triage macro-F1 0.945; 51 briefs: grounded, no-leak, playbook all 100% | PASS |
 | A6 | Genie ≥ 10/12 unseen benchmarks | 11/12; Q12 NEEDS_REVIEW, reference SQL rounds (R54) | PASS |
 | A7 | Lakebase loop | synced 13 = gold 13; smoke rejects a stale update; snapshot shows the 3 demo actions; Genie Q11 correct | PASS |
 | A8 | App | RUNNING; `APP_ENV`, `MASK_CHECK`, 3× `CASE_UPDATE` log lines | PASS |
-| A9 | Gate, secret scan, privacy | per-file ≤ 9,000 chars PASS; whole repo 33 files / ~190k chars OVER the 30 / 90k budget (reported); gitleaks clean; privacy grep clean | PARTIAL |
+| A9 | Gate, secret scan, privacy | per-file ≤ 9,000 chars PASS; whole repo 33 files / ~194k chars OVER the 30 / 90k budget (reported); gitleaks clean; privacy grep clean | PARTIAL |
 | A10 | Reprovision from zero | fresh fevm workspace after a platform reset: STEP 0–9 OK, no manual steps (user: counts as the proof) | PASS |
 
 A4 is a recall vs false-alarm trade-off: 7/8 injuries caught (rule 2/8), but 2/4 hard negatives and ~half of healthy 3-week windows also alert. Model, thresholds and staff rule frozen (DESIGN.md).
@@ -34,6 +34,7 @@ STEP 9 app OK  state RUNNING
 | 800103862519147 | holdout evaluation #4 (`validate=1`) | SUCCESS |
 | 820778245496680 | snapshot (app Publish button) | SUCCESS |
 | 565367944406204 | t9 Genie after demo actions | SUCCESS |
+| 823100973171573 | t8/t4/t9 after the final fixes | SUCCESS, attempt 0 each |
 
 ## 1. Lakeflow (t1–t3)
 t1: 162 games fetched, 0 failed; 14,476 league transactions. t2 (seed 4242, v2.0): tracking 22,070 · athletes 33 · wellness 3,052 · notes 939 · IL events 32; truth: train 8 injuries + 2 hard negatives, holdout 8 + 4. SDP update `a259016e…` expectations:
@@ -50,8 +51,8 @@ Rows: silver pitches 22,067 · wellness 3,052 · trainer_notes 939 · transactio
 ## 2. Unity Catalog (t4)
 - 18 tier tags OK; `armguard_sensitivity=medical` on 5 columns (note_text, IL description, body_part, injury, side).
 - `OK ABAC policy` → `PROBE path b effective=True`: without the medical role `'[REDACTED - medical staff only]'`; with it the text, e.g. `'Checked right oblique: fine.'` (synthetic).
-- App SP grants OK (USE, SELECT on 10 tables, EXECUTE mask_medical); `case_history` SKIP until the first snapshot.
-- Lineage (system tables): `silver_trainer_notes → note_triage`, `silver_transactions → il_extractions`, `pitcher_risk_current → pitcher_risk_synced`, …
+- App SP grants OK (USE, SELECT on 11 tables incl. `case_history`, EXECUTE mask_medical); t8 now creates `case_history`, so it is granted before the first snapshot.
+- Lineage (`system.access.table_lineage`, newest 12 in run `823100973171573`): `silver_roster → case_history`, `silver_il_events → club_il_extractions`, `pitcher_briefs → pitcher_risk_current`, …
 
 ## 3. ML (t5, t6, t10 validation)
 t5: 924 train rows, 110 positives; OOF thresholds HIGH 0.13 / ELEVATED 0.078; OOF recall 1.00, fa/100 2.95 (staff rule 0.38 / 0.49); `injury_risk` v1 (MLflow run `c3f14433c8fb4362bc50e1a3ca1aec8b`), round-trip load OK.
@@ -92,7 +93,7 @@ Holdout evaluation #4 (run `800103862519147`, config `13575cbef60752ef`; detecti
 - Snapshot after the demo: 4 cases; `{'acknowledged': 1, 'cleared': 1, 'action_set': 1, 'open': 1}`; median 28.1 h to first decision.
 
 ## 6. Genie (t9)
-Run `565367944406204`: `Score: 11/12 (target >= 10/12: PASS)`, eval-run API, benchmarks unseen by Genie. Q1–Q11 GOOD (Q8 = 467, matching t7; Q11 status counts match the snapshot). Q12 (average hours to first decision) NEEDS_REVIEW: Genie's SQL differs only by the reference's `ROUND(…, 1)` and an extra `priority IS NOT NULL`. Hero in Q2 and Q10: PASS.
+Runs `565367944406204` and `823100973171573`: `Score: 11/12 (target >= 10/12: PASS)`, eval-run API, benchmarks unseen by Genie. Q1–Q11 GOOD (Q8 = 467, matching t7; Q11 status counts match the snapshot). Q12 (average hours to first decision) NEEDS_REVIEW: Genie's SQL differs only by the reference's `ROUND(…, 1)` and an extra `priority IS NOT NULL`. Hero in Q2 and Q10: PASS.
 
 ## 7. App (log lines)
 ```

@@ -98,3 +98,11 @@ def evaluate(w, sid, g):
         out[x.benchmark_question_id] = (val(d.assessment), [val(a) for a in d.assessment_reasons or []])
         print("bench", x.benchmark_question_id, out[x.benchmark_question_id], [a.response for a in d.actual_response or []])
     return r, out
+
+
+def try_evaluate(w, sid, g, *hide):
+    """evaluate(), fail-soft (the Beta eval run may fail or time out) -> (run, results, None) or (None, {}, failure text)."""
+    try:
+        return (*evaluate(w, sid, g), None)
+    except (Exception, SystemExit) as e:
+        return None, {}, f"eval run FAILED/timeout: {redact(e, *hide)}"
