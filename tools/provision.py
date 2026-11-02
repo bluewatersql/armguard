@@ -104,7 +104,7 @@ def main():
     ap.add_argument("--yes", action="store_true")
     a = ap.parse_args()
     if a.teardown:
-        print("teardown not implemented until Task 13")
+        print("teardown is not implemented (disclosed in DESIGN.md)")
         return 1
     return 0 if all(f(a) for f in (lakebase, catalog, overrides, bundle, bring_up)) else 1
 

@@ -1,6 +1,6 @@
 # EVIDENCE: ArmGuard
 
-All numbers are copied from job output in the live workspace; workspace ids and hosts are scrubbed. Sources: the UC volume `armguard_ops.evidence` (via `tools/publish_evidence.py --pull`), job-run metadata, the SDP event log and read-only `COUNT(*)`s, in a workspace rebuilt from zero on 2026-11-01.
+All numbers are copied from job output in the live workspace; workspace ids and hosts are scrubbed. Sources: the UC volume `armguard_ops.evidence` (`tools/publish_evidence.py --pull`), job-run metadata, the SDP event log and read-only `COUNT(*)`s, in a workspace rebuilt from zero on 2026-11-01.
 
 ## Results at a glance (spec §13)
 | # | Criterion | Real value | Result |
@@ -13,10 +13,10 @@ All numbers are copied from job output in the live workspace; workspace ids and 
 | A6 | Genie ≥ 10/12 unseen benchmarks | 11/12; Q12 NEEDS_REVIEW, reference SQL rounds (R54) | PASS |
 | A7 | Lakebase loop | synced 13 = gold 13; smoke rejects a stale update; snapshot shows the 3 demo actions; Genie Q11 correct | PASS |
 | A8 | App | RUNNING; `APP_ENV`, `MASK_CHECK`, 3× `CASE_UPDATE` log lines | PASS |
-| A9 | Gate, secret scan, privacy | per-file ≤ 9,000 chars PASS; whole repo 33 files / ~190k chars OVER the 30 / 90k read budget (reported, not hidden); gitleaks clean; privacy grep clean | PARTIAL |
-| A10 | Reprovision from zero | fresh workspace, STEP 0–9 OK, no manual steps; the spec's second workspace (`e2-demo-field-eng`) **not yet run** | PARTIAL |
+| A9 | Gate, secret scan, privacy | per-file ≤ 9,000 chars PASS; whole repo 33 files / ~190k chars OVER the 30 / 90k budget (reported); gitleaks clean; privacy grep clean | PARTIAL |
+| A10 | Reprovision from zero | fresh fevm workspace after a platform reset: STEP 0–9 OK, no manual steps (user: counts as the proof) | PASS |
 
-A4 is a recall vs false-alarm trade-off: 7/8 injuries caught (staff rule 2/8), but 2/4 hard negatives and about half of healthy 3-week windows also alert. Not retuned (DESIGN.md).
+A4 is a recall vs false-alarm trade-off: 7/8 injuries caught (rule 2/8), but 2/4 hard negatives and ~half of healthy 3-week windows also alert. Model, thresholds and staff rule frozen (DESIGN.md).
 
 ## Run summary (scrubbed)
 ```
@@ -27,13 +27,13 @@ STEP 9 app OK  state RUNNING
 ```
 | run id | what | result |
 |---|---|---|
-| 128736621004166 | `armguard_daily` from zero (STEP 4) | t0–t7, t9, t10_gate, t10_genai_eval SUCCESS; t8 attempt 0 INTERNAL_ERROR (SIGABRT), platform auto-retry SUCCESS; t10_validate EXCLUDED |
-| 910954703753794 | t4/t8/t9 re-run for app SP grants (STEP 6) | SUCCESS |
-| 49810023588883 | ops smoke (STEP 8) | SUCCESS |
+| 128736621004166 | daily run from zero (STEP 4) | t0–t7, t9, t10_gate, t10_genai_eval SUCCESS; t8 attempt 0 INTERNAL_ERROR (SIGABRT), auto-retry SUCCESS; t10_validate EXCLUDED |
+| 910954703753794 | t4/t8/t9 for app SP grants (STEP 6) | SUCCESS |
+| 49810023588883 | ops smoke (STEP 8) | attempt 0 INTERNAL_ERROR (SIGABRT), platform auto-retry SUCCESS |
 | 405156101900698 | t6–t9 + t10_genai_eval, triage labels v3 | SUCCESS |
 | 800103862519147 | holdout evaluation #4 (`validate=1`) | SUCCESS |
-| 820778245496680 | ops snapshot (app Publish button) | SUCCESS |
-| 565367944406204 | t9 Genie after the demo actions | SUCCESS |
+| 820778245496680 | snapshot (app Publish button) | SUCCESS |
+| 565367944406204 | t9 Genie after demo actions | SUCCESS |
 
 ## 1. Lakeflow (t1–t3)
 t1: 162 games fetched, 0 failed; 14,476 league transactions. t2 (seed 4242, v2.0): tracking 22,070 · athletes 33 · wellness 3,052 · notes 939 · IL events 32; truth: train 8 injuries + 2 hard negatives, holdout 8 + 4. SDP update `a259016e…` expectations:
@@ -50,14 +50,14 @@ Rows: silver pitches 22,067 · wellness 3,052 · trainer_notes 939 · transactio
 ## 2. Unity Catalog (t4)
 - 18 tier tags OK; `armguard_sensitivity=medical` on 5 columns (note_text, IL description, body_part, injury, side).
 - `OK ABAC policy` → `PROBE path b effective=True`: without the medical role `'[REDACTED - medical staff only]'`; with it the text, e.g. `'Checked right oblique: fine.'` (synthetic).
-- App SP grants OK (USE, SELECT on 10 tables, EXECUTE mask_medical); `case_history` SKIP until the first snapshot creates it.
-- Lineage rows (system tables): `silver_trainer_notes → note_triage`, `silver_transactions → il_extractions`, `pitcher_risk_current → pitcher_risk_synced`, …
+- App SP grants OK (USE, SELECT on 10 tables, EXECUTE mask_medical); `case_history` SKIP until the first snapshot.
+- Lineage (system tables): `silver_trainer_notes → note_triage`, `silver_transactions → il_extractions`, `pitcher_risk_current → pitcher_risk_synced`, …
 
 ## 3. ML (t5, t6, t10 validation)
 t5: 924 train rows, 110 positives; OOF thresholds HIGH 0.13 / ELEVATED 0.078; OOF recall 1.00, fa/100 2.95 (staff rule 0.38 / 0.49); `injury_risk` v1 (MLflow run `c3f14433c8fb4362bc50e1a3ca1aec8b`), round-trip load OK.
 t6 (as of 2025-08-15): 13 pitchers; HIGH P2 2 · ELEVATED P1 1, P2 1 · NORMAL 9. Hero A22 *Daniel Stone*: ELEVATED 0.081, red_flag note → **P1 PASS**.
 
-Holdout evaluation #4 (run `800103862519147`, config `13575cbef60752ef`; detection = ≥ 2 alert days inside [IL−21, IL−1]):
+Holdout evaluation #4 (run `800103862519147`, config `13575cbef60752ef`; detection = ≥ 2 consecutive alert days inside [IL−21, IL−1]):
 
 | incident | A20 | A16 | A28 | A22 | A12 | A11 | A14 | A24 |
 |---|---|---|---|---|---|---|---|---|
@@ -83,7 +83,7 @@ Holdout evaluation #4 (run `800103862519147`, config `13575cbef60752ef`; detecti
 
 ## 4. GenAI (t7, t10 eval)
 - `ai_extract` on real 2025 IL text: 846 league placements parsed, **467 pitcher IL placements**; by body part: other 113, elbow 109, shoulder 102, back 43, forearm 43, oblique 20.
-- Briefs: 51 over 9 dates, 0 fallback. Hero headline: "Daniel Stone: ELEVATED tier, P1 with a red-flag note, so staff should review him now" → `refer_medical`.
+- Briefs: 51 over 9 dates, 0 fallback. Hero: "Daniel Stone: ELEVATED tier, P1 with a red-flag note, so staff should review him now" → `refer_medical`.
 - Eval (MLflow run `a81a80d1599a474b91f1a9d5d1ee2470`, `mlflow.genai.evaluate`): body part 16/16; triage (labels v3) macro-F1 0.945 over 939 notes, red_flag recall 25/32 (7 → soreness), 4 none → red_flag; brief_grounded, no_medical_leak and action_in_playbook all 100%.
 
 ## 5. Lakebase (t8, smoke, snapshot)

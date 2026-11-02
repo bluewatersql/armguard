@@ -5,22 +5,22 @@ One line per item. `Rnn` = a ruling in the build ledger; "user" = a decision the
 ## Key decisions
 - **Lakeflow end to end:** a Lakeflow Job lands MLB JSON and simulator feeds in a UC Volume; an SDP pipeline (Auto Loader → bronze → silver → gold, expectations, `full_refresh`) builds the features.
 - **Bundle without `mode: development`** (unprefixed UC names); Lakebase project, synced table and Genie space are created idempotently with the SDK (no Beta DAB resources).
-- **One command reprovisions** (`tools/provision.py`): no hand-copied ids or UI clicks; the app reads its runtime config from Delta `armguard_ops.app_config`.
-- **Identity:** real 2025 MLB games for one club, shown as the fictional *Cascadia Ospreys*; pitchers get seeded fake names, rejected if they match any real player; all medical data is simulated.
+- **One command reprovisions** (`tools/provision.py`): no hand-copied ids or UI clicks; the app reads runtime config from Delta `app_config`.
+- **Identity:** one real club's 2025 games, shown as the fictional *Cascadia Ospreys*; seeded fake pitcher names; simulated medical data.
 - **Baseline to beat:** the staff rule `velo_delta <= -1.5` mph (last 3 vs prior 10 appearances).
 
 ## Task 0 spike outcomes
 - PASS: Q1 serverless reaches statsapi.mlb.com, Q3 unprefixed bundle names, Q4 `singleVariantColumn` in SDP.
 - Q2 `__file__` is undefined in `spark_python_task` → path bootstrap from `sys.argv[0]` (R5).
-- Q5/Q6 account-wide `sensitivity`/`domain` tags have fixed values → own governed keys `armguard_sensitivity`, `armguard_tier` (R6); mask = ABAC `CREATE POLICY` on the tag, verified by a probe, with a legacy `SET MASK` fallback (R8).
+- Q5/Q6 account-wide `sensitivity`/`domain` tags have fixed values → own keys `armguard_sensitivity`, `armguard_tier` (R6); mask = ABAC `CREATE POLICY`, verified by a probe, legacy `SET MASK` fallback (R8).
 - Q7 `ai_query` `responseFormat` fails on Claude 5.5 → JSON-only prompt parsed in Python; invalid output → template brief (R7). No sampling parameters.
 - Q8 Lakebase SDK create + `.wait()`; synced table into a standard catalog. Q9 Genie eval-run API; `CAN_RUN` via the permissions API. Q10 serverless env `"3"`, inline app env.
 
 ## Why Lakebase
-Staff act on alerts in an app: row-level transactions, an append-only `case_events` audit trail and optimistic locking (stale updates rejected) need OLTP. Scores stay governed in Delta and reach Postgres through a synced table; a snapshot job copies case history back to Delta for Genie.
+Staff act on alerts in an app: row-level transactions, an append-only `case_events` audit trail and optimistic locking (stale updates rejected) need OLTP. Scores stay governed in Delta and reach Postgres via a synced table; a snapshot copies case history back to Delta for Genie.
 
 ## Why the model decides and GenAI explains
-A GBM plus deterministic P1–P3 rules make every call, so each alert is reproducible and testable. GenAI extracts (IL body parts), triages notes (a red_flag note changes queue priority) and writes briefs grounded in the row's numbers, with actions limited to the 5-item playbook. The hero reaches P1 through red_flag triage while the model alone says ELEVATED (R32): the AI changes the workflow, not the score.
+A GBM plus deterministic P1–P3 rules make every call, so alerts are reproducible and testable. GenAI extracts IL body parts, triages notes (a red_flag note raises priority) and writes briefs grounded in the row's numbers, with playbook-only actions. The hero reaches P1 through red_flag triage while the model alone says ELEVATED (R32): the AI changes the workflow, not the score.
 
 ## Ground truth and holdout protocol
 - The simulator seals truth in `armguard_gt` (owner only). Train IL dates 05-15..06-30, holdout 07-20..09-20; thresholds use train out-of-fold metrics only.
@@ -30,7 +30,7 @@ A GBM plus deterministic P1–P3 rules make every call, so each alert is reprodu
   - #2 (user: "re-run once, metric only"): metric corrected to the spec's in-window rule; recall 7/8, FA 2/4, null 47.8%; MISS.
   - #3 reproduction after the platform reset the workspace: identical model metrics, but hero P1 MISS (triage variance: the hero's red_flag note came back as soreness).
   - #4 after triage labels v3, chosen under a pre-registered dev/test protocol: identical model metrics, hero P1 PASS; A4 MISS.
-- **User decision: accept the A4 MISS and disclose it rather than retune.** No threshold or rule was changed after seeing holdout results.
+- **User decision: accept the A4 MISS and disclose it.** Model, thresholds and staff rule were frozen. The evaluation metric (#2, corrected to the spec's in-window rule) and the triage labels (#4, v3 under a pre-registered dev/test protocol, prompted by the hero's MISS in #3) changed after holdout runs; disclosed below.
 - `holdout_evaluations` is a per-workspace counter (the current workspace shows 2), so this list is the global tally.
 - The OOF threshold rule still uses run-overlap detection, frozen since training; only the evaluation metric follows the spec (R49).
 - **dead_arm asymmetry:** on the dead-arm hard negative the model is judged on P1, the staff rule on its alert runs.
@@ -48,23 +48,24 @@ A GBM plus deterministic P1–P3 rules make every call, so each alert is reprodu
 - v2 alone failed its macro-F1 gate (0.878 < 0.891), so it was reverted.
 
 ## Genie benchmarks (frozen once written, R37)
-- R39: the league "pitcher" definition was corrected to include `Pitcher`/`P` positions (323 → 467); this fixes ground truth, not Genie output.
+- R39: the league "pitcher" definition now includes `Pitcher`/`P` positions (323 → 467): a ground-truth fix, not Genie output.
 - R41: Q12 wording changed to "decided cases only", because an undecided case has no answer.
 - R54: Q12 is NEEDS_REVIEW; Genie's SQL differs only by the reference's `ROUND(…, 1)` and an extra `priority IS NOT NULL` filter. Left frozen: 11/12.
 
 ## Governance
-- R26: extra app-SP grants (USE `armguard_gov`, SELECT `staff_roles`) are kept but unverified; the revoke test was blocked.
-- R43: the app reads notes as its service principal (no on-behalf-of), so notes in the app are always masked; the medical/non-medical contrast is shown by the t4 probe.
+- R26: extra app-SP grants (USE `armguard_gov`, SELECT `staff_roles`) kept but unverified; revoke test blocked.
+- R43: the app reads notes as its service principal (no on-behalf-of), so app notes are always masked; the t4 probe shows the role contrast.
 - R46: no `GRANT EXECUTE ON MODEL`; the app never loads the model.
 
 ## Other disclosures
-- R18: the role_change hard negative duplicates pitch rows so the outing reaches ≥ 60 pitches and flips RP → SP.
+- R18: role_change duplicates pitch rows so the outing reaches ≥ 60 pitches (RP → SP).
 - R30: brief-count target relaxed to ≥ 40; the live eval has 51.
-- R34: league IL KPIs freeze at first extraction; re-extract with `DELETE FROM il_extractions`.
-- Reprovision run: t8's first attempt hit a platform SIGABRT and the automatic retry succeeded; `--teardown` is not implemented.
+- R34: league IL KPIs freeze at first extraction (README).
+- A10 (user): the from-zero rebuild into a fresh fevm workspace after a platform reset is the reprovision proof; it did not run in `e2-demo-field-eng`.
+- Both Lakebase tasks in that rebuild (t8, smoke) aborted on attempt 0 (platform SIGABRT) and passed on the automatic retry, which we rely on. No `--teardown` yet.
 
 ## Size budget
-The evaluator reads up to 30 files and 90k characters, at most 9k per file. Every file is ≤ 9,000 characters (hard gate), but the repo is 33 files and about 190k characters. Many code files ran 2–3× over their per-file targets because correctness and demo reliability came first (user, R29). `tools/publish_evidence.py --gate` prints a read order: these three docs, then the core files of each layer. That prefix fits the budget; the rest is reported as past budget.
+The evaluator reads up to 30 files / 90k characters, at most 9k per file. Every file is ≤ 9,000 characters (hard gate), but the repo is 33 files and about 190k characters. Many code files ran 2–3× over their per-file targets because correctness and demo reliability came first (user, R29). `tools/publish_evidence.py --gate` prints a read order: these three docs, then the core files of each layer. That prefix fits the budget; the rest is reported as past budget.
 
 ## AI-assisted build
-Claude Code coordinated subagents: an implementer per task, an independent review of every task, fix rounds until clean. The human approved the concept, spec and plan gates and made the key decisions marked "user" here (accept A4 MISS, the single metric re-run, reproduction #3, labels v3, working demo over size caps). Hygiene: gitleaks secret scan on every commit; identifiers scrubbed by `publish_evidence.py`.
+Claude Code coordinated subagents: an implementer per task, an independent review of every task, fix rounds until clean. The human approved the concept, spec and plan gates and made the key decisions marked "user" here (accept A4 MISS, the single metric re-run, reproduction #3, labels v3, working demo over size caps). Hygiene: gitleaks on every commit; identifiers scrubbed.

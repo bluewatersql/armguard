@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAP, FILES, CHARS = 9000, 30, 90000  # evaluator: <= 9k chars/file (hard); reads <= 30 files / 90k chars
 PATTERNS = [  # hosts first so a workspace id inside a host or app URL goes with it
+    (r"eyJ[\w-]+\.[\w-]+\.[\w-]+", "<token>"),  # JWT / OAuth access token
     (r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "<email>"),
     (r"(?:https?://)?[\w.-]+\.databricksapps\.com[^\s)|'\"<>]*", "<app-url>"),
     (r"(?:https?://)?[\w.-]+\.(?:cloud\.)?(?:azure)?databricks\.(?:com|net)[^\s)|'\"<>]*", "<host>"),
@@ -52,11 +53,14 @@ def cli(profile, *args):
 
 def literals(profile, target):
     """Identifiers of the live workspace (CLI), its catalog (overrides) and any extras in a gitignored file."""
-    d = json.loads(cli(profile, "auth", "describe", "-o", "json"))["details"]
+    j = json.loads(cli(profile, "auth", "describe", "-o", "json"))
+    d = j["details"]
     conf = {k: v.get("value") for k, v in d.get("configuration", {}).items()}
     lit = {urlparse(d["host"]).hostname: "<host>", conf.get("workspace_id"): "<workspace-id>",
-           conf.get("account_id"): "<account-id>"}
+           conf.get("account_id"): "<account-id>", j.get("username"): "<user>"}
     ov = ROOT / ".databricks" / "bundle" / target / "variable-overrides.json"
+    if not ov.exists():
+        sys.exit(f"missing {ov.relative_to(ROOT)}: run tools/provision.py for target '{target}' first (it writes the catalog)")
     lit[json.loads(ov.read_text()).get("catalog")] = "<catalog>"
     extra = ROOT / ".superpowers" / "scrub_literals.json"  # e.g. a previous workspace: {"<value>": "<label>"}
     lit.update(json.loads(extra.read_text()) if extra.exists() else {})

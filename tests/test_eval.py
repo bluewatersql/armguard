@@ -94,10 +94,11 @@ def test_scrub_removes_identifiers():
     sys.path.insert(0, str(R / "tools"))
     import publish_evidence as pe
     email, host, ws, tok, cat = "jane" + "@example.com", "example-ws" + ".cloud.databricks.com", "1234567890123456", "dapi" + "0" * 32, "demo_cat_x"
-    app = "armguard-" + ws + ".aws.databricksapps" + ".com"
-    s = f"user {email} at https://{host}/x and {host} ws {ws} tok {tok} table {cat}.armguard.t run 987654 app https://{app}/q {app}"
+    app, jwt = "armguard-" + ws + ".aws.databricksapps" + ".com", "eyJ" + "hbGc_i-O" + "." + "eyJzdWIi" + "." + "c2l-n_X"
+    s = f"user {email} at https://{host}/x and {host} ws {ws} tok {tok} table {cat}.armguard.t run 987654 app https://{app}/q {app} bearer {jwt}"
     out = pe.scrub(s, literals={ws: "<workspace-id>", cat: "<catalog>"})
-    for bad in (email, host, ws, tok, cat, app, "databricksapps"):
+    assert "bearer <token>" in out
+    for bad in (email, host, ws, tok, cat, app, "databricksapps", jwt, "eyJ"):
         assert bad not in out
     assert "run 987654" in out and "<catalog>.armguard.t" in out
 
