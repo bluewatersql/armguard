@@ -63,13 +63,13 @@ def upsert(w, sp, c, wh, ser, title):
 
 
 def grant(w, sid):
-    """CAN_RUN for the app SP (SPIKE Q9b) -> (log, ok); WAIT while the app is missing."""
+    """CAN_RUN for the app SP (permissions API) -> (log, ok); WAIT while the app is missing."""
     from databricks.sdk.errors import NotFound
     from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
     try:
         app_sp = w.apps.get("armguard").service_principal_client_id
     except NotFound:
-        return "WAIT app 'armguard' not found (Task 10 re-runs t9)", True
+        return "WAIT app 'armguard' not found (re-run t9 after the app is deployed)", True
     except Exception as e:
         return f"FAIL app lookup: {redact(e)}", False
     try:
@@ -81,7 +81,7 @@ def grant(w, sid):
 
 
 def evaluate(w, sid, g):
-    """Eval run, <= 20 min (SPIKE Q9) -> (run, {question_id: (assessment, reasons)})."""
+    """Genie eval-run API, <= 20 min -> (run, {question_id: (assessment, reasons)})."""
     G, val = w.genie, lambda x: getattr(x, "value", x)
     rid = G.genie_create_eval_run(sid).eval_run_id
     r = poll(lambda: G.genie_get_eval_run(sid, rid), lambda x: val(x.eval_run_status))

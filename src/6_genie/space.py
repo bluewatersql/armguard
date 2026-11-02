@@ -1,7 +1,7 @@
 """What Genie is taught (text instruction, example SQLs, joins, snippets) and build_space() -> serialized_space v2."""
 import hashlib
 
-PIT = "lower(position) RLIKE '^(rhp|lhp)$|pitcher'"  # league pitcher IL: RHP 257, Pitcher 103, LHP 68, pitcher 38, Relief Pitcher 1 (R39)
+PIT = "lower(position) RLIKE '^(rhp|lhp)$|pitcher'"  # league pitcher IL: RHP 257, Pitcher 103, LHP 68, pitcher 38, Relief Pitcher 1
 RISK, DAILY, ILX, CASES = "{ops}.pitcher_risk_current", "{club}.gold_pitcher_daily_features", "{ops}.il_extractions", "{ops}.case_history"
 TABLES = ("armguard.gold_appearances", "armguard.gold_pitcher_daily_features", "armguard.silver_roster", "armguard.silver_trainer_notes",
           "armguard_ops.case_history", "armguard_ops.il_extractions", "armguard_ops.pitcher_briefs", "armguard_ops.pitcher_risk_current")

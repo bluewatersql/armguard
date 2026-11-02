@@ -120,7 +120,7 @@ def main(cm):
         f"missing = wrong) -> {pf((acc or 0) >= .85)} (>= 85%)\n"
         f"ai_classify triage (labels {lv}): n = {len(tri)} labelled notes, {scored} triaged (missing = wrong), macro-F1 {f1:.3f} (reported)\n\n"
         f"{cmx.to_markdown()}\n\n"
-        f"Briefs (prompt_version {PV}): {len(b)} briefs (target 50, R30), {nfb} fallback; response = headline + why; "
+        f"Briefs (prompt_version {PV}): {len(b)} briefs (target 50, >= 40 accepted), {nfb} fallback; response = headline + why; "
         "fallback (template) briefs count as failures for grounded and playbook\n"
         f"- brief_grounded {g:.1%} -> {pf(g >= .9)} (>= 90%)\n- no_medical_leak {nl:.1%} -> {pf(nl == 1) if readable else 'MISS (vacuous)'} (= 100%; 6-word note windows; "
         f"notes readable by job identity: {'yes' if readable else 'NO - check vacuous'})\n- action_in_playbook {pb:.1%} -> {pf(pb == 1)} (= 100%)\n"

@@ -40,7 +40,7 @@ def endpoint(c):
 
 def extract_new(sp, c, src, target, key, where, cols, fields):
     """ai_extract v2.1 on rows not yet in target; errored rows are retried next run. -> (new, pending)"""
-    vals = ", ".join(f"x:response:{f}:value::string {f}" for f in fields)  # SPIKE Q7 read path
+    vals = ", ".join(f"x:response:{f}:value::string {f}" for f in fields)  # ai_extract JSON
     new = f"FROM {c.fq('armguard', src)} s LEFT ANTI JOIN {target} e ON e.event_id = string(s.{key}) WHERE {where}"
     before = sp.table(target).count()
     sp.sql(f"""INSERT INTO {target} SELECT {cols}, {vals} FROM (

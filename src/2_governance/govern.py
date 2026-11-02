@@ -8,7 +8,7 @@ MED = [("silver_trainer_notes", "note_text", "note_id"), ("silver_il_events", "d
 ST = {"silver_trainer_notes", "silver_il_events", "silver_pitches", "silver_wellness"}
 GR = {"armguard": ["silver_roster", "silver_trainer_notes", "gold_appearances", "gold_pitcher_daily_features"],
       "armguard_ops": ["pitcher_risk_current", "pitcher_briefs", "il_extractions", "case_history", "model_thresholds", "app_config"],
-      "armguard_gov": ["staff_roles"]}  # staff_roles lets the mask UDF lookup run for the SP (verify in Task 10)
+      "armguard_gov": ["staff_roles"]}  # staff_roles lets the mask UDF lookup run for the SP
 WHO = ""
 
 
@@ -123,7 +123,7 @@ def govern(spark, cfg, log):
                 step(spark, f"GRANT SELECT ON TABLE {C}.{s}.{t} TO {P}", log, f"grant select {s}.{t}")
         step(spark, f"GRANT EXECUTE ON FUNCTION {G}.mask_medical TO {P}", log, "grant execute mask_medical")
     else:
-        log.append("WAIT app SP not found (re-run after Task 10)")
+        log.append("WAIT app SP not found (re-run after the app is deployed)")
     for t, d in (("gold_appearances", "Pitcher appearance workload; own-baseline velocity deltas"),
                  ("gold_pitcher_daily_features", "Pitcher-day model features; label_il_14d")):
         step(spark, f"COMMENT ON TABLE {A}.{t} IS '{d}'", log, f"comment {t}")

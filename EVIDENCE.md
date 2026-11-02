@@ -2,7 +2,7 @@
 
 All numbers are copied from job output in the live workspace; workspace ids and hosts are scrubbed. Sources: the UC volume `armguard_ops.evidence` (`tools/publish_evidence.py --pull`), job-run metadata, the SDP event log and read-only `COUNT(*)`s, in a workspace rebuilt from zero on 2026-11-01.
 
-## Results at a glance (spec §13)
+## Results at a glance (acceptance criteria)
 | # | Criterion | Real value | Result |
 |---|---|---|---|
 | A1 | Daily job, every task SUCCESS, row counts | run `128736621004166`: 12 tasks SUCCESS (t8 after a platform auto-retry), t10_validate gated off; counts §1 | PASS |
@@ -10,11 +10,11 @@ All numbers are copied from job output in the live workspace; workspace ids and 
 | A3 | Tags, mask probe, MASK_CHECK, lineage | ABAC policy (path b) probe `effective=True`; app SP sees `[REDACTED…`; lineage rows present (t4 prints the newest 12 from system tables) | PASS |
 | A4 | Holdout backtest (evaluation #4) | recall 7/8 PASS · median lead 18 d PASS · hard-negative false alarms 2/4 **MISS** · model beats rule **MISS** · null rate 47.8% vs 2.2% (reported) · hero P1 PASS | **MISS** |
 | A5 | GenAI quality | body part 16/16 = 100%; triage macro-F1 0.945; 51 briefs: grounded, no-leak, playbook all 100% | PASS |
-| A6 | Genie ≥ 10/12 unseen benchmarks | 11/12; Q12 NEEDS_REVIEW, reference SQL rounds (R54) | PASS |
+| A6 | Genie ≥ 10/12 unseen benchmarks | 11/12; Q12 NEEDS_REVIEW, reference SQL rounds | PASS |
 | A7 | Lakebase loop | synced 13 = gold 13; smoke rejects a stale update; snapshot shows the 3 demo actions; Genie Q11 correct | PASS |
 | A8 | App | RUNNING; `APP_ENV`, `MASK_CHECK`, 3× `CASE_UPDATE` log lines | PASS |
 | A9 | Gate, secret scan, privacy | per-file ≤ 9,000 chars PASS; whole repo 33 files / ~194k chars OVER the 30 / 90k budget (reported); gitleaks clean; privacy grep clean | PARTIAL |
-| A10 | Reprovision from zero | fresh fevm workspace after a platform reset: STEP 0–9 OK, no manual steps (user: counts as the proof) | PASS |
+| A10 | Reprovision from zero | fresh fevm workspace after a platform reset: STEP 0–9 OK, no manual steps; I count this rebuild as the reprovision proof | PASS |
 
 A4 is a recall vs false-alarm trade-off: 7/8 injuries caught (rule 2/8), but 2/4 hard negatives and ~half of healthy 3-week windows also alert. Model, thresholds and staff rule frozen (DESIGN.md).
 
